@@ -3,108 +3,265 @@ info:
   title: SmallBiz Retail Management API
   version: 1.0.0
   description: |
-    ## SmallBiz — Team Claudius
+    ## Small Business Operations Platform — Team Claudius (61)
 
-    Backend API for a retail shop management platform built for Indian garment
-    and general retail stores. Covers billing, inventory, staff management,
-    procurement, GPS-based attendance, and data-privacy compliance.
+    **Project:** Small Business Operations Platform
+    **Domain:** Small Retail Clothing Stores (Tier 2/3/4 cities)
+    **Institution:** IITM Online BS Degree Program, Indian Institute of Technology, Madras
+
+    REST API for a single responsive web application that unifies billing, inventory,
+    staff attendance, vendor procurement, and sales analytics for small retail clothing
+    stores. Requirements were derived from an in-depth interview with Bombay Fashion,
+    a family-run retail clothing store.
 
     ---
 
-    ## User Stories & API Mapping
+    ## User Stories and API Mapping
 
-    ### 🧑‍💼 Owner / Manager — Store Setup
-    | User Story | API |
-    |---|---|
-    | As an owner, I want to register my store so I can start using the platform | `POST /auth/register` |
-    | As an owner, I want to log in with my email and password | `POST /auth/login` |
-    | As an owner, I want to update my store name, address and logo | `PATCH /store` |
-    | As an owner, I want to set the store GPS location and radius for attendance | `PATCH /store/gps-settings` |
-    | As an owner, I want to switch between structured and ephemeral billing modes | `PATCH /store/billing-mode` |
-    | As an owner, I want to configure how long ephemeral sale data is retained | `PATCH /store/retention` |
+    Stories are segmented by device context: (M) Mobile-Lite for shop floor use,
+    (D) Desktop-Full for back-office management.
 
-    ### 👥 Staff & User Management
-    | User Story | API |
-    |---|---|
-    | As an owner, I want to add staff members with a phone and PIN | `POST /users` |
-    | As an owner, I want to add managers with an email and password | `POST /users` |
-    | As an owner, I want to view all users in my store | `GET /users` |
-    | As an owner, I want to update a user's name or contact details | `PATCH /users/:id` |
-    | As an owner, I want to deactivate a staff member | `DELETE /users/:id` |
-    | As a user, I want to change my own password | `PATCH /users/:id/password` |
-    | As a staff member, I want to change my PIN | `PATCH /users/:id/pin` |
-    | As a user, I want to upload my profile avatar | `PATCH /users/:id/avatar` |
+    ### EPIC 1: Store Setup and Access Control
 
-    ### 🕐 Attendance & GPS
-    | User Story | API |
+    **Story 1.1 — Store Creation (D)**
+    As an Owner, I want to create my store profile with name, address, and GPS location,
+    so that operations are linked to a verified store.
+    | API Endpoint | Purpose |
     |---|---|
-    | As a staff member, I want to clock in at the start of my shift | `POST /attendance/clock-in` |
-    | As a staff member, I want to clock out at the end of my shift | `POST /attendance/clock-out` |
-    | As a manager, I want to see who is currently clocked in today | `GET /attendance/today` |
-    | As a manager, I want to force clock-out a staff member who forgot | `PATCH /attendance/force-clockout/:userId` |
-    | As an owner, I want GPS verification so staff must be at the store to clock in | `PATCH /store/gps-settings` (gpsRequireClockIn) |
+    | `POST /auth/register` | Create store and owner account |
+    | `PATCH /store` | Update store name, address, logo |
+    | `PATCH /store/gps-settings` | Set GPS coordinates and geofence radius |
 
-    ### 🛒 Point of Sale
-    | User Story | API |
+    **Story 1.2 — Staff Management (D)**
+    As an Owner, I want to add/remove staff using name and phone,
+    so that access is centrally controlled.
+    | API Endpoint | Purpose |
     |---|---|
-    | As a staff member, I want to create a sale with multiple items | `POST /sales` |
-    | As a staff member, I want to sell items by price band (FIFO stock deduction) | `POST /sales` (priceBandId) |
-    | As a staff member, I want to add a custom-priced item without stock deduction | `POST /sales` (priceBandId: 0) |
-    | As a staff member, I want to attach a customer's name and phone to a sale | `POST /sales` (customerName, customerPhone) |
-    | As a manager, I want to process a return or exchange for a previous sale | `POST /returns` |
+    | `POST /users` | Add a staff member or manager |
+    | `GET /users` | List all users in the store |
+    | `PATCH /users/:id` | Update staff details |
+    | `DELETE /users/:id` | Deactivate a staff member |
 
-    ### 📦 Inventory Management
-    | User Story | API |
+    **Story 1.3 — Notification Configuration (D)**
+    As an Owner, I want to configure which users receive important alerts,
+    so that sensitive business notifications remain controlled.
+    | API Endpoint | Purpose |
     |---|---|
-    | As an owner, I want to create product categories | `POST /categories` |
-    | As an owner, I want to set price bands (SKUs) under each category | `POST /price-bands` |
-    | As an owner, I want to add incoming stock batches with cost price | `POST /inventory/batches` |
-    | As a manager, I want to view all stock batches with filters | `GET /inventory/batches?filter=` |
-    | As a manager, I want to see a stock matrix by category and price band | `GET /inventory/matrix` |
-    | As a manager, I want to adjust batch quantity after a stock count | `PATCH /inventory/batches/:id` (adjust) |
-    | As a manager, I want to mark units as defective | `PATCH /inventory/batches/:id` (defective) |
-    | As a manager, I want to close a batch that is no longer active | `PATCH /inventory/batches/:id` (close) |
+    | `PATCH /store` | Store-level configuration including notification settings |
 
-    ### 🚚 Procurement & Vendors
-    | User Story | API |
-    |---|---|
-    | As an owner, I want to add and manage vendors | `POST /vendors`, `PATCH /vendors/:id` |
-    | As a manager, I want to get suggested reorder quantities based on sales trends | `GET /vendors/:id/suggest-order` |
-    | As a manager, I want to create a purchase reorder for a vendor | `POST /reorders` |
-    | As a manager, I want to update the status of a reorder (sent → acknowledged → fulfilled) | `PATCH /reorders/:id` |
-    | As a manager, I want to see the WhatsApp-ready message text for a reorder | `GET /reorders` (messageText field) |
+    ---
 
-    ### 📊 Dashboard & Reports
-    | User Story | API |
-    |---|---|
-    | As an owner, I want to see weekly/monthly revenue, units sold, and top SKU | `GET /dashboard/summary` |
-    | As an owner, I want to see daily sales data for charting | `GET /dashboard/daily-summary?range=weekly|monthly` |
-    | As a manager, I want to see staff sales performance leaderboard | `GET /staff/leaderboard` |
+    ### EPIC 2: Inventory Lifecycle (Price-Batch Model)
 
-    ### 🔒 Audit & Compliance
-    | User Story | API |
+    **Story 2.1 — Add Inventory by Price Batch (M/D)**
+    As an Owner, I want to add inventory as "X pieces of Y item at Z price band",
+    so that SKU tagging is not required and I can update inventory via simple language/voice message.
+    | API Endpoint | Purpose |
     |---|---|
-    | As an owner, I want to view the audit log of data wipe events | `GET /audit/log` |
-    | As an owner, I want to wipe ephemeral sale data older than retention period | `POST /audit/wipe` |
+    | `POST /categories` | Create a product category |
+    | `POST /price-bands` | Define a price band under a category |
+    | `POST /inventory/batches` | Add a stock batch with quantity and cost price |
+
+    **Story 2.2 — Automatic Stock Deduction (M)**
+    As Staff, I want stock to auto-update when I record a sale,
+    so that manual reconciliation is unnecessary.
+    | API Endpoint | Purpose |
+    |---|---|
+    | `POST /sales` | Record a sale; triggers FIFO batch deduction automatically |
+
+    **Story 2.3 — Stock Visibility Dashboard (D)**
+    As Manager, I want to see stock levels color-coded by price band,
+    so that I know which bands need restocking.
+    | API Endpoint | Purpose |
+    |---|---|
+    | `GET /inventory/matrix` | Stock matrix grouped by category and price band |
+    | `GET /price-bands/with-stock` | Price bands with current stock totals |
+    | `GET /inventory/batches?filter=low_stock` | Batches filtered by stock status |
+
+    **Story 2.4 — Slow-Moving Stock Identification (D)**
+    As Manager, I want the system to identify low-velocity batches,
+    so that discount decisions can be made.
+    | API Endpoint | Purpose |
+    |---|---|
+    | `GET /inventory/batches?filter=aging` | Batches flagged as aging or slow-moving |
+
+    ---
+
+    ### EPIC 3: Sales and Billing (Configurable Retention)
+
+    **Story 3.1 — Calculator-Style Billing (M)**
+    As Staff, I want to enter sales using price band and quantity and customer data
+    (name, phone number) or based on online sales,
+    so that checkout takes under 30 seconds, manual entry of online sales is recorded,
+    and stock deduction from price batches is automatic.
+    | API Endpoint | Purpose |
+    |---|---|
+    | `POST /sales` | Create a sale with line items, customer data, payment method |
+    | `GET /price-bands/with-stock` | Lookup available price bands at point of sale |
+
+    **Story 3.2 — Configurable Billing Mode (D)**
+    As Owner, I want to choose between Structured Mode and Ephemeral Mode,
+    so that I control how much transaction data is stored.
+    Structured Mode stores full transaction history. Ephemeral Mode stores summary-only
+    data with a configurable retention period (7/30/custom days).
+    | API Endpoint | Purpose |
+    |---|---|
+    | `PATCH /store/billing-mode` | Switch between structured and ephemeral billing |
+
+    **Story 3.3 — Retention Configuration (D)**
+    As Owner, I want to configure how long sale summaries are retained,
+    so that storage aligns with my business comfort.
+    | API Endpoint | Purpose |
+    |---|---|
+    | `PATCH /store/retention` | Set retention period in days for ephemeral sales data |
+
+    ---
+
+    ### EPIC 4: Returns and Exchanges
+
+    Returns are allowed only within the configured retention window.
+
+    **Story 4.1 — Return Validation (M)**
+    As Staff, I want to lookup a customer's recent purchase via phone number,
+    so that returns are validated quickly.
+    | API Endpoint | Purpose |
+    |---|---|
+    | `GET /customers` | Find customer by phone number |
+    | `GET /sales` | Retrieve recent purchases for a customer |
+
+    **Story 4.2 — Exchange/Return Processing (M)**
+    As Staff, I want to offset return value against a new sale (if exchange is valid),
+    so that customer exchanges are seamless and stocks and sales are appropriately updated.
+    Returned items are re-added to the appropriate price batch.
+    | API Endpoint | Purpose |
+    |---|---|
+    | `POST /returns` | Process a return or exchange; restores stock to batch |
+
+    ---
+
+    ### EPIC 5: Vendor Lifecycle
+
+    Using generic messaging/email integration instead of WhatsApp API.
+
+    **Story 5.1 — Vendor Directory (D)**
+    As Manager, I want to store vendor contact details and typical supplied price bands,
+    so that vendor selection is structured.
+    | API Endpoint | Purpose |
+    |---|---|
+    | `POST /vendors` | Create a vendor record |
+    | `GET /vendors` | List all vendors with dues and supplied bands |
+    | `PATCH /vendors/:id` | Update vendor details |
+    | `DELETE /vendors/:id` | Deactivate a vendor |
+
+    **Story 5.2 — Quick Reorder Template (D)**
+    As Manager, I want a pre-filled reorder template generated from stock data,
+    so that I can send reorder messages quickly.
+    | API Endpoint | Purpose |
+    |---|---|
+    | `POST /reorders` | Create a reorder with suggested quantities pre-filled |
+    | `GET /reorders` | List reorders; includes formatted message text for dispatch |
+
+    **Story 5.3 — Suggested Reorder Quantity (D)**
+    As Manager, I want reorder quantity suggestions based on last 7 to 14 day sales velocity,
+    so that restocking is data-driven.
+    | API Endpoint | Purpose |
+    |---|---|
+    | `GET /vendors/:id/suggest-order` | Returns per-band suggested quantities based on sales velocity |
+
+    ---
+
+    ### EPIC 6: Customer Lifecycle
+
+    Minimal CRM: name and phone only.
+
+    **Story 6.1 — Optional Customer Capture (M)**
+    As Staff, I want to optionally save customer phone during sale,
+    so that repeat purchase tracking and outreach is possible.
+    | API Endpoint | Purpose |
+    |---|---|
+    | `POST /sales` | Accepts optional customerName and customerPhone fields |
+    | `POST /customers` | Explicitly register a customer record |
+
+    **Story 6.2 — Repeat Purchase Metric (D)**
+    As Manager, I want to see repeat purchase rate over 30/90 days,
+    so that loyalty trends are visible.
+    | API Endpoint | Purpose |
+    |---|---|
+    | `GET /dashboard/summary` | Includes repeat customer metrics |
+
+    **Story 6.3 — Filter-Based Campaign Export (D)**
+    As Manager, I want to filter customers by price band and purchase date,
+    so that I can export targeted contact lists for outreach.
+    | API Endpoint | Purpose |
+    |---|---|
+    | `GET /customers` | Filter customers by purchase history for outreach export |
+
+    ---
+
+    ### EPIC 7: Staff Operations
+
+    **Story 7.1 — Location-Based Attendance (M)**
+    As Staff, I want to mark attendance only when within store GPS radius,
+    so that presence is accurately tracked.
+    | API Endpoint | Purpose |
+    |---|---|
+    | `POST /attendance/clock-in` | Clock in; GPS coordinates validated against store geofence |
+    | `POST /attendance/clock-out` | Clock out with optional GPS validation |
+    | `PATCH /store/gps-settings` | Owner configures gpsRequireClockIn and gpsRequireClockOut |
+    | `PATCH /attendance/force-clockout/:userId` | Manager corrects a missed clock-out |
+
+    **Story 7.2 — Staff Sales Summary (D)**
+    As Owner, I want weekly sales summary by staff,
+    so that performance is measurable.
+    | API Endpoint | Purpose |
+    |---|---|
+    | `GET /staff/leaderboard` | Per-staff revenue and sales count for the current day |
+    | `GET /dashboard/summary` | Store-wide summary including per-staff breakdown |
+
+    ---
+
+    ### EPIC 8: Trends and Decision Support
+
+    **Story 8.1 — Price-Band Trend Charts (D)**
+    As Manager, I want 7/14/30 day trend charts,
+    so that sales movement is visible visually.
+    | API Endpoint | Purpose |
+    |---|---|
+    | `GET /dashboard/daily-summary` | Daily sales data per price band for the requested date range |
+
+    **Story 8.2 — Text-Based Insights (D)**
+    As Manager, I want automatic text summaries of trend changes,
+    so that interpretation is simplified.
+    Example output: "350 band sales increased 18% compared to last week."
+    | API Endpoint | Purpose |
+    |---|---|
+    | `GET /dashboard/summary` | Returns computed trend deltas alongside revenue figures |
+
+    **Story 8.3 — Discount Recommendation (D)**
+    As Manager, I want suggested discount percentages for slow-moving batches,
+    so that dead inventory reduces.
+    | API Endpoint | Purpose |
+    |---|---|
+    | `GET /inventory/batches?filter=aging` | Lists aging batches with margin data for discount decisions |
 
     ---
 
     ## Authentication
 
     All endpoints except `POST /auth/register` and `POST /auth/login` require a
-    **Bearer JWT token** in the `Authorization` header.
+    Bearer JWT token in the Authorization header.
 
     ```
     Authorization: Bearer <token>
     ```
 
-    Tokens are returned on login and are valid for the duration set in `JWT_EXPIRES_IN`.
+    Tokens are returned on login and are valid for the duration configured in JWT_EXPIRES_IN.
 
     ## Roles
     | Role | Permissions |
     |---|---|
     | `owner` | Full access to all endpoints |
-    | `manager` | Access to operations, inventory, staff roster; no billing/audit/wipe |
+    | `manager` | Operations, inventory, staff roster; no billing mode or audit wipe |
     | `staff` | Clock-in/out, create sales, view own data only |
 
 servers:
