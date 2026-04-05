@@ -1,0 +1,2242 @@
+openapi: 3.0.3
+info:
+  title: SmallBiz Retail Management API
+  description: >
+    Backend API for the SmallBiz retail management platform (Claudius).
+    Supports store registration, inventory, sales, attendance, staff, vendors,
+    reorders, returns, and audit operations.
+  version: 1.0.0
+
+servers:
+  - url: http://localhost:3001/api
+    description: Local development server
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: Auth
+    description: Registration and login (no auth required)
+  - name: Store
+    description: Store profile and settings management
+  - name: Users
+    description: User management within a store
+  - name: Categories
+    description: Product category management
+  - name: PriceBands
+    description: Price band management and stock queries
+  - name: Inventory
+    description: Inventory batch management and stock matrix
+  - name: Sales
+    description: Sales transactions
+  - name: Attendance
+    description: Staff clock-in / clock-out
+  - name: Staff
+    description: Staff leaderboard
+  - name: Dashboard
+    description: KPI summaries and daily sales data
+  - name: Vendors
+    description: Vendor management and suggested order
+  - name: Reorders
+    description: Purchase reorder management
+  - name: Returns
+    description: Sales return and exchange management
+  - name: Audit
+    description: Audit log and ephemeral data wipe
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PATHS
+# ─────────────────────────────────────────────────────────────────────────────
+paths:
+
+  # ── Auth ────────────────────────────────────────────────────────────────────
+
+  /auth/register:
+    post:
+      tags: [Auth]
+      summary: Register a new store and owner account
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '201':
+          description: Store and owner created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Login as owner/manager (email + password) or staff (phone + PIN)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  # ── Store ───────────────────────────────────────────────────────────────────
+
+  /store:
+    get:
+      tags: [Store]
+      summary: Get the authenticated user's store
+      responses:
+        '200':
+          description: Store details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Store'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags: [Store]
+      summary: Update store name, address, or logo (owner only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateStoreRequest'
+      responses:
+        '200':
+          description: Updated store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Store'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /store/billing-mode:
+    patch:
+      tags: [Store]
+      summary: Update billing mode (owner only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateBillingModeRequest'
+      responses:
+        '200':
+          description: Updated store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Store'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /store/retention:
+    patch:
+      tags: [Store]
+      summary: Update data retention days for ephemeral mode (owner only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateRetentionRequest'
+      responses:
+        '200':
+          description: Updated store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Store'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /store/gps-settings:
+    patch:
+      tags: [Store]
+      summary: Update GPS geofencing settings (owner only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateGpsSettingsRequest'
+      responses:
+        '200':
+          description: Updated store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Store'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  # ── Users ───────────────────────────────────────────────────────────────────
+
+  /users:
+    get:
+      tags: [Users]
+      summary: List all active users in the store
+      responses:
+        '200':
+          description: Array of users
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/User'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      tags: [Users]
+      summary: Add a new user to the store (owner or manager only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddUserRequest'
+      responses:
+        '201':
+          description: Created user
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /users/{id}:
+    patch:
+      tags: [Users]
+      summary: Update user name, phone, or email (owner or manager only)
+      parameters:
+        - $ref: '#/components/parameters/IntId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateUserRequest'
+      responses:
+        '200':
+          description: Updated user
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [Users]
+      summary: Soft-delete (deactivate) a user (owner only)
+      parameters:
+        - $ref: '#/components/parameters/IntId'
+      responses:
+        '200':
+          description: User deactivated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /users/{id}/password:
+    patch:
+      tags: [Users]
+      summary: Change a user's password (owner, manager, or self)
+      parameters:
+        - $ref: '#/components/parameters/IntId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdatePasswordRequest'
+      responses:
+        '200':
+          description: Password updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /users/{id}/pin:
+    patch:
+      tags: [Users]
+      summary: Change a staff user's PIN (owner or manager only)
+      parameters:
+        - $ref: '#/components/parameters/IntId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdatePinRequest'
+      responses:
+        '200':
+          description: PIN updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /users/{id}/avatar:
+    patch:
+      tags: [Users]
+      summary: Update a user's avatar (self, owner, or manager)
+      parameters:
+        - $ref: '#/components/parameters/IntId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateAvatarRequest'
+      responses:
+        '200':
+          description: Updated user
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ── Categories ──────────────────────────────────────────────────────────────
+
+  /categories:
+    get:
+      tags: [Categories]
+      summary: List all categories for the store
+      responses:
+        '200':
+          description: Array of categories
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Category'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      tags: [Categories]
+      summary: Create a new category (owner or manager only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateCategoryRequest'
+      responses:
+        '201':
+          description: Created category
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Category'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          description: Category name already exists in this store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ── Price Bands ─────────────────────────────────────────────────────────────
+
+  /price-bands:
+    get:
+      tags: [PriceBands]
+      summary: List active price bands for the store
+      responses:
+        '200':
+          description: Array of price bands
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PriceBand'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      tags: [PriceBands]
+      summary: Create a new price band (owner or manager only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreatePriceBandRequest'
+      responses:
+        '201':
+          description: Created price band
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PriceBand'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /price-bands/with-stock:
+    get:
+      tags: [PriceBands]
+      summary: List active price bands with aggregated current stock levels
+      responses:
+        '200':
+          description: Array of price bands with stock
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PriceBandWithStock'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  # ── Inventory ───────────────────────────────────────────────────────────────
+
+  /inventory/batches:
+    get:
+      tags: [Inventory]
+      summary: List inventory batches with optional filter
+      parameters:
+        - name: filter
+          in: query
+          required: false
+          description: Filter batches by condition
+          schema:
+            type: string
+            enum: [all, low_stock, aging, new_arrivals]
+            default: all
+      responses:
+        '200':
+          description: Array of inventory batches
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/InventoryBatch'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      tags: [Inventory]
+      summary: Add a new inventory batch (owner or manager only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddBatchRequest'
+      responses:
+        '201':
+          description: Created inventory batch
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InventoryBatch'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /inventory/batches/{id}:
+    patch:
+      tags: [Inventory]
+      summary: Update an inventory batch — close, adjust quantity, or mark defective (owner or manager only)
+      parameters:
+        - $ref: '#/components/parameters/IntId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateBatchRequest'
+      responses:
+        '200':
+          description: Updated inventory batch
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InventoryBatch'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /inventory/matrix:
+    get:
+      tags: [Inventory]
+      summary: Get stock matrix grouped by category with price band columns
+      responses:
+        '200':
+          description: Array of matrix rows
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/MatrixRow'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  # ── Sales ───────────────────────────────────────────────────────────────────
+
+  /sales:
+    post:
+      tags: [Sales]
+      summary: Create a new sale with FIFO batch deduction
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateSaleRequest'
+      responses:
+        '201':
+          description: Sale created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateSaleResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  # ── Attendance ──────────────────────────────────────────────────────────────
+
+  /attendance/today:
+    get:
+      tags: [Attendance]
+      summary: Get today's staff roster with clock-in status (owner or manager only)
+      responses:
+        '200':
+          description: Array of roster entries
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/RosterEntry'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /attendance/clock-in:
+    post:
+      tags: [Attendance]
+      summary: Clock in the authenticated user with GPS coordinates
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GpsBody'
+      responses:
+        '200':
+          description: Clock-in recorded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClockInResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /attendance/clock-out:
+    post:
+      tags: [Attendance]
+      summary: Clock out the authenticated user with GPS coordinates
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GpsBody'
+      responses:
+        '200':
+          description: Clock-out recorded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClockOutResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /attendance/force-clockout/{userId}:
+    patch:
+      tags: [Attendance]
+      summary: Force clock out a specific staff member (owner or manager only)
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          description: ID of the user to force clock out
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Force clock-out successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ForceClockOutResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  # ── Staff ───────────────────────────────────────────────────────────────────
+
+  /staff/leaderboard:
+    get:
+      tags: [Staff]
+      summary: Get today's staff leaderboard ranked by revenue
+      responses:
+        '200':
+          description: Array of leaderboard entries
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/LeaderboardEntry'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  # ── Dashboard ───────────────────────────────────────────────────────────────
+
+  /dashboard/summary:
+    get:
+      tags: [Dashboard]
+      summary: Get weekly KPI summary (owner or manager only)
+      responses:
+        '200':
+          description: Weekly KPI summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DashboardSummary'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /dashboard/daily-summary:
+    get:
+      tags: [Dashboard]
+      summary: Get per-row daily sales data for weekly or monthly range (owner or manager only)
+      parameters:
+        - name: range
+          in: query
+          required: false
+          description: Time range for daily summary
+          schema:
+            type: string
+            enum: [weekly, monthly]
+            default: weekly
+      responses:
+        '200':
+          description: Array of daily summary rows
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/DailySummaryRow'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  # ── Vendors ─────────────────────────────────────────────────────────────────
+
+  /vendors:
+    get:
+      tags: [Vendors]
+      summary: List all active vendors for the store
+      responses:
+        '200':
+          description: Array of vendors with dues and supplied bands
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Vendor'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      tags: [Vendors]
+      summary: Create a new vendor (owner or manager only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateVendorRequest'
+      responses:
+        '201':
+          description: Created vendor
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Vendor'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /vendors/{id}:
+    patch:
+      tags: [Vendors]
+      summary: Update a vendor (owner or manager only)
+      parameters:
+        - $ref: '#/components/parameters/IntId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateVendorRequest'
+      responses:
+        '200':
+          description: Updated vendor
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Vendor'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [Vendors]
+      summary: Soft-delete a vendor (owner only)
+      parameters:
+        - $ref: '#/components/parameters/IntId'
+      responses:
+        '200':
+          description: Vendor deactivated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /vendors/{id}/suggest-order:
+    get:
+      tags: [Vendors]
+      summary: Get suggested reorder quantities for a vendor based on 14-day demand (owner or manager only)
+      parameters:
+        - $ref: '#/components/parameters/IntId'
+      responses:
+        '200':
+          description: Array of suggested order items
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SuggestOrderItem'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ── Reorders ────────────────────────────────────────────────────────────────
+
+  /reorders:
+    get:
+      tags: [Reorders]
+      summary: List all reorders for the store (owner or manager only)
+      responses:
+        '200':
+          description: Array of reorders
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Reorder'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      tags: [Reorders]
+      summary: Create a new reorder (owner or manager only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateReorderRequest'
+      responses:
+        '201':
+          description: Created reorder
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Reorder'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /reorders/{id}/status:
+    patch:
+      tags: [Reorders]
+      summary: Update reorder status (owner or manager only)
+      parameters:
+        - $ref: '#/components/parameters/IntId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateReorderStatusRequest'
+      responses:
+        '200':
+          description: Updated reorder
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Reorder'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ── Returns ─────────────────────────────────────────────────────────────────
+
+  /returns:
+    get:
+      tags: [Returns]
+      summary: List recent returns for the store (owner or manager only)
+      responses:
+        '200':
+          description: Array of return records (most recent 100)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ReturnRecord'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      tags: [Returns]
+      summary: Create a return or exchange, restoring inventory stock
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateReturnRequest'
+      responses:
+        '201':
+          description: Return created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateReturnResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ── Audit ───────────────────────────────────────────────────────────────────
+
+  /audit/log:
+    get:
+      tags: [Audit]
+      summary: Get audit log entries for the store (owner only)
+      responses:
+        '200':
+          description: Array of audit log entries (most recent 100)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AuditLogEntry'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /audit/wipe:
+    post:
+      tags: [Audit]
+      summary: Wipe ephemeral/expired sales data after owner password verification (owner only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WipeRequest'
+      responses:
+        '200':
+          description: Wipe completed — returns the new audit log entry
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditLogEntry'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+# ─────────────────────────────────────────────────────────────────────────────
+# COMPONENTS
+# ─────────────────────────────────────────────────────────────────────────────
+components:
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  # ── Reusable parameters ──────────────────────────────────────────────────────
+  parameters:
+    IntId:
+      name: id
+      in: path
+      required: true
+      description: Integer resource identifier
+      schema:
+        type: integer
+
+  # ── Reusable responses ───────────────────────────────────────────────────────
+  responses:
+    BadRequest:
+      description: Validation error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Unauthorized:
+      description: Missing or invalid JWT
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Forbidden:
+      description: Insufficient role permissions
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+  # ── Schemas ──────────────────────────────────────────────────────────────────
+  schemas:
+
+    # ── Shared primitives ──────────────────────────────────────────────────────
+
+    ErrorResponse:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string
+          example: Resource not found
+        code:
+          type: string
+          example: VALIDATION_ERROR
+
+    MessageResponse:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string
+          example: Operation completed successfully
+
+    # ── Auth ───────────────────────────────────────────────────────────────────
+
+    RegisterRequest:
+      type: object
+      required: [shopName, address, ownerName, email, phone, password]
+      properties:
+        shopName:
+          type: string
+          minLength: 1
+          example: My Corner Store
+        address:
+          type: string
+          minLength: 1
+          example: 12 Market Street, Mumbai
+        logo:
+          type: string
+          description: Base64-encoded image string
+          example: data:image/png;base64,iVBORw0KGgo...
+        ownerName:
+          type: string
+          minLength: 1
+          example: Rahul Sharma
+        email:
+          type: string
+          format: email
+          example: rahul@mycornerstore.in
+        phone:
+          type: string
+          pattern: '^\d{10}$'
+          example: '9876543210'
+        password:
+          type: string
+          minLength: 6
+          example: secret123
+
+    LoginRequest:
+      type: object
+      required: [identifier, credential]
+      properties:
+        identifier:
+          type: string
+          description: Email address (owner/manager) or 10-digit phone number (staff)
+          example: rahul@mycornerstore.in
+        credential:
+          type: string
+          description: Password (owner/manager) or 4-digit PIN (staff)
+          example: secret123
+
+    AuthResult:
+      type: object
+      required: [token, user]
+      properties:
+        token:
+          type: string
+          description: "Signed JWT - include as Authorization: Bearer <token>"
+          example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+        user:
+          $ref: '#/components/schemas/User'
+
+    # ── Store ──────────────────────────────────────────────────────────────────
+
+    Store:
+      type: object
+      required:
+        - id
+        - name
+        - ownerId
+        - billingMode
+        - gpsRequireClockIn
+        - gpsRequireClockOut
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: integer
+          example: 1
+        name:
+          type: string
+          example: My Corner Store
+        address:
+          type: string
+          nullable: true
+          example: 12 Market Street, Mumbai
+        logo:
+          type: string
+          nullable: true
+          description: Base64-encoded image string
+        ownerId:
+          type: integer
+          example: 1
+        billingMode:
+          type: string
+          enum: [structured, ephemeral]
+          example: structured
+        retentionDays:
+          type: integer
+          nullable: true
+          enum: [7, 14, 30, 90]
+          example: 30
+        gpsLatitude:
+          type: number
+          nullable: true
+          example: 19.076
+        gpsLongitude:
+          type: number
+          nullable: true
+          example: 72.877
+        gpsRadiusM:
+          type: number
+          nullable: true
+          example: 200
+        gpsRequireClockIn:
+          type: boolean
+          example: false
+        gpsRequireClockOut:
+          type: boolean
+          example: false
+        createdAt:
+          type: string
+          format: date-time
+          example: '2025-01-01T08:00:00.000Z'
+        updatedAt:
+          type: string
+          format: date-time
+          example: '2025-06-01T10:30:00.000Z'
+
+    UpdateStoreRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          example: New Store Name
+        address:
+          type: string
+          example: 15 New Road, Delhi
+        logo:
+          type: string
+          description: Base64-encoded image string
+
+    UpdateBillingModeRequest:
+      type: object
+      required: [billingMode]
+      properties:
+        billingMode:
+          type: string
+          enum: [structured, ephemeral]
+          example: ephemeral
+
+    UpdateRetentionRequest:
+      type: object
+      required: [retentionDays]
+      properties:
+        retentionDays:
+          type: integer
+          nullable: true
+          enum: [7, 14, 30, 90]
+          example: 30
+
+    UpdateGpsSettingsRequest:
+      type: object
+      required: [gpsLatitude, gpsLongitude, gpsRadiusM, gpsRequireClockIn, gpsRequireClockOut]
+      properties:
+        gpsLatitude:
+          type: number
+          minimum: -90
+          maximum: 90
+          example: 19.076
+        gpsLongitude:
+          type: number
+          minimum: -180
+          maximum: 180
+          example: 72.877
+        gpsRadiusM:
+          type: number
+          exclusiveMinimum: true
+          minimum: 0
+          example: 200
+        gpsRequireClockIn:
+          type: boolean
+          default: false
+          example: true
+        gpsRequireClockOut:
+          type: boolean
+          default: false
+          example: false
+
+    # ── Users ──────────────────────────────────────────────────────────────────
+
+    User:
+      type: object
+      required: [id, storeId, name, phone, role, isActive, createdAt, updatedAt]
+      properties:
+        id:
+          type: integer
+          example: 7
+        storeId:
+          type: integer
+          example: 1
+        name:
+          type: string
+          example: Priya Nair
+        phone:
+          type: string
+          example: '9123456789'
+        email:
+          type: string
+          format: email
+          nullable: true
+          example: priya@store.in
+        role:
+          type: string
+          enum: [owner, manager, staff]
+          example: staff
+        isActive:
+          type: boolean
+          example: true
+        avatar:
+          type: string
+          nullable: true
+          description: Base64-encoded avatar image
+        createdAt:
+          type: string
+          format: date-time
+          example: '2025-01-15T09:00:00.000Z'
+        updatedAt:
+          type: string
+          format: date-time
+          example: '2025-06-01T12:00:00.000Z'
+
+    AddUserRequest:
+      type: object
+      required: [name, phone, role]
+      description: >
+        For `staff` role, `pin` is required.
+        For `manager` or `owner` role, `password` is required.
+      properties:
+        name:
+          type: string
+          minLength: 1
+          example: Amit Verma
+        phone:
+          type: string
+          pattern: '^\d{10}$'
+          example: '9001234567'
+        role:
+          type: string
+          enum: [owner, manager, staff]
+          example: staff
+        email:
+          type: string
+          format: email
+          example: amit@store.in
+        password:
+          type: string
+          minLength: 6
+          description: Required for manager or owner role
+          example: securepass
+        pin:
+          type: string
+          pattern: '^\d{4}$'
+          description: Required for staff role
+          example: '1234'
+
+    UpdateUserRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          example: Amit Kumar Verma
+        phone:
+          type: string
+          pattern: '^\d{10}$'
+          example: '9009876543'
+        email:
+          type: string
+          format: email
+          example: new@store.in
+
+    UpdatePasswordRequest:
+      type: object
+      required: [currentPassword, newPassword]
+      properties:
+        currentPassword:
+          type: string
+          minLength: 1
+          example: oldpass123
+        newPassword:
+          type: string
+          minLength: 6
+          example: newpass456
+
+    UpdatePinRequest:
+      type: object
+      required: [pin]
+      properties:
+        pin:
+          type: string
+          pattern: '^\d{4}$'
+          example: '5678'
+
+    UpdateAvatarRequest:
+      type: object
+      required: [avatar]
+      properties:
+        avatar:
+          type: string
+          minLength: 1
+          description: Base64-encoded image string
+          example: data:image/jpeg;base64,/9j/4AAQSkZJRg...
+
+    # ── Categories ─────────────────────────────────────────────────────────────
+
+    Category:
+      type: object
+      required: [id, storeId, name, createdAt]
+      properties:
+        id:
+          type: integer
+          example: 3
+        storeId:
+          type: integer
+          example: 1
+        name:
+          type: string
+          example: Shirts
+        createdAt:
+          type: string
+          format: date-time
+          example: '2025-02-01T10:00:00.000Z'
+
+    CreateCategoryRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          example: Trousers
+
+    # ── Price Bands ────────────────────────────────────────────────────────────
+
+    PriceBand:
+      type: object
+      required: [id, storeId, categoryId, price, isActive, createdAt]
+      properties:
+        id:
+          type: integer
+          example: 5
+        storeId:
+          type: integer
+          example: 1
+        categoryId:
+          type: integer
+          example: 3
+        price:
+          type: number
+          format: float
+          example: 499.00
+        isActive:
+          type: boolean
+          example: true
+        createdAt:
+          type: string
+          format: date-time
+          example: '2025-02-05T11:00:00.000Z'
+
+    PriceBandWithStock:
+      allOf:
+        - $ref: '#/components/schemas/PriceBand'
+        - type: object
+          required: [categoryName, totalStock]
+          properties:
+            categoryName:
+              type: string
+              example: Shirts
+            totalStock:
+              type: integer
+              example: 42
+
+    CreatePriceBandRequest:
+      type: object
+      required: [categoryId, price]
+      properties:
+        categoryId:
+          type: integer
+          minimum: 1
+          example: 3
+        price:
+          type: number
+          exclusiveMinimum: true
+          minimum: 0
+          example: 799.00
+
+    # ── Inventory ──────────────────────────────────────────────────────────────
+
+    InventoryBatch:
+      type: object
+      required:
+        - id
+        - storeId
+        - priceBandId
+        - quantityAdded
+        - quantityRemaining
+        - categoryName
+        - bandPrice
+        - ageInDays
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: integer
+          example: 12
+        storeId:
+          type: integer
+          example: 1
+        priceBandId:
+          type: integer
+          example: 5
+        vendorId:
+          type: integer
+          nullable: true
+          example: 2
+        quantityAdded:
+          type: integer
+          example: 100
+        quantityRemaining:
+          type: integer
+          example: 73
+        costPrice:
+          type: number
+          nullable: true
+          example: 300.00
+        addedBy:
+          type: integer
+          nullable: true
+          example: 1
+        notes:
+          type: string
+          nullable: true
+          example: Monsoon stock
+        createdAt:
+          type: string
+          format: date-time
+          example: '2025-05-01T08:00:00.000Z'
+        updatedAt:
+          type: string
+          format: date-time
+          example: '2025-05-20T14:00:00.000Z'
+        vendorName:
+          type: string
+          nullable: true
+          example: Sunrise Textiles
+        categoryName:
+          type: string
+          example: Shirts
+        bandPrice:
+          type: number
+          example: 499.00
+        ageInDays:
+          type: integer
+          example: 19
+        margin:
+          type: integer
+          nullable: true
+          description: Gross margin percentage
+          example: 40
+
+    AddBatchRequest:
+      type: object
+      required: [priceBandId, quantityAdded]
+      properties:
+        priceBandId:
+          type: integer
+          minimum: 1
+          example: 5
+        vendorId:
+          type: integer
+          minimum: 1
+          example: 2
+        quantityAdded:
+          type: integer
+          minimum: 1
+          example: 50
+        costPrice:
+          type: number
+          exclusiveMinimum: true
+          minimum: 0
+          example: 280.00
+        notes:
+          type: string
+          example: Pre-festival stock
+
+    UpdateBatchRequest:
+      type: object
+      required: [action]
+      properties:
+        action:
+          type: string
+          enum: [close, adjust, defective]
+          example: adjust
+        quantity:
+          type: integer
+          minimum: 0
+          description: Required when action is `adjust`
+          example: 60
+
+    MatrixRow:
+      type: object
+      required: [categoryId, categoryName, bands]
+      properties:
+        categoryId:
+          type: integer
+          example: 3
+        categoryName:
+          type: string
+          example: Shirts
+        bands:
+          type: object
+          description: Map of price (as string key) to total stock quantity
+          additionalProperties:
+            type: integer
+          example:
+            '299': 10
+            '499': 42
+            '799': 5
+
+    # ── Sales ──────────────────────────────────────────────────────────────────
+
+    CartItem:
+      type: object
+      required: [priceBandId, categoryName, price, quantity, subtotal]
+      properties:
+        priceBandId:
+          type: integer
+          description: Use 0 for a custom/non-inventory item
+          example: 5
+        categoryName:
+          type: string
+          minLength: 1
+          example: Shirts
+        price:
+          type: number
+          exclusiveMinimum: true
+          minimum: 0
+          example: 499.00
+        quantity:
+          type: integer
+          minimum: 1
+          example: 2
+        subtotal:
+          type: number
+          example: 998.00
+
+    CreateSaleRequest:
+      type: object
+      required: [items, paymentMethod]
+      properties:
+        items:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/CartItem'
+        customerName:
+          type: string
+          example: Sneha Kapoor
+        customerPhone:
+          type: string
+          pattern: '^\d{10}$'
+          example: '9988776655'
+        paymentMethod:
+          type: string
+          enum: [cash, upi, store_credit]
+          example: upi
+        discountAmount:
+          type: number
+          minimum: 0
+          default: 0
+          example: 50.00
+
+    CreateSaleResult:
+      type: object
+      required: [id, createdAt]
+      properties:
+        id:
+          type: integer
+          example: 204
+        createdAt:
+          type: string
+          format: date-time
+          example: '2025-06-05T15:22:00.000Z'
+
+    # ── Attendance ─────────────────────────────────────────────────────────────
+
+    GpsBody:
+      type: object
+      required: [lat, lng]
+      properties:
+        lat:
+          type: number
+          example: 19.076
+        lng:
+          type: number
+          example: 72.877
+
+    RosterEntry:
+      type: object
+      required: [userId, name, role, isActive, clockedIn]
+      properties:
+        userId:
+          type: integer
+          example: 7
+        name:
+          type: string
+          example: Priya Nair
+        role:
+          type: string
+          example: staff
+        isActive:
+          type: boolean
+          example: true
+        clockedIn:
+          type: boolean
+          example: true
+        checkInAt:
+          type: string
+          format: date-time
+          nullable: true
+          example: '2025-06-05T09:00:00.000Z'
+        checkOutAt:
+          type: string
+          format: date-time
+          nullable: true
+          example: null
+
+    ClockInResult:
+      type: object
+      required: [clockedIn, checkInAt]
+      properties:
+        clockedIn:
+          type: boolean
+          enum: [true]
+          example: true
+        checkInAt:
+          type: string
+          format: date-time
+          example: '2025-06-05T09:01:00.000Z'
+
+    ClockOutResult:
+      type: object
+      required: [clockedIn, checkOutAt]
+      properties:
+        clockedIn:
+          type: boolean
+          enum: [false]
+          example: false
+        checkOutAt:
+          type: string
+          format: date-time
+          example: '2025-06-05T18:30:00.000Z'
+
+    ForceClockOutResult:
+      type: object
+      required: [success]
+      properties:
+        success:
+          type: boolean
+          enum: [true]
+          example: true
+
+    # ── Staff ──────────────────────────────────────────────────────────────────
+
+    LeaderboardEntry:
+      type: object
+      required: [userId, name, role, isActive, clockedIn, revenueToday, salesCountToday]
+      properties:
+        userId:
+          type: integer
+          example: 7
+        name:
+          type: string
+          example: Priya Nair
+        role:
+          type: string
+          enum: [owner, manager, staff]
+          example: staff
+        isActive:
+          type: boolean
+          example: true
+        clockedIn:
+          type: boolean
+          example: true
+        checkInAt:
+          type: string
+          format: date-time
+          nullable: true
+          example: '2025-06-05T09:00:00.000Z'
+        revenueToday:
+          type: number
+          format: float
+          example: 12450.00
+        salesCountToday:
+          type: integer
+          example: 8
+
+    # ── Dashboard ──────────────────────────────────────────────────────────────
+
+    TopBand:
+      type: object
+      required: [priceBandId, categoryName, bandPrice, revenue]
+      properties:
+        priceBandId:
+          type: integer
+          example: 5
+        categoryName:
+          type: string
+          example: Shirts
+        bandPrice:
+          type: number
+          example: 499.00
+        revenue:
+          type: number
+          example: 24950.00
+
+    DashboardSummary:
+      type: object
+      required: [totalRevenue, unitsSold, agingBatchCount, activeVendors]
+      properties:
+        totalRevenue:
+          type: number
+          format: float
+          description: Total revenue over the last 7 days
+          example: 87500.00
+        unitsSold:
+          type: integer
+          description: Total units sold over the last 7 days
+          example: 175
+        topBand:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/TopBand'
+        agingBatchCount:
+          type: integer
+          description: Number of inventory batches older than 60 days with remaining stock
+          example: 3
+        activeVendors:
+          type: integer
+          description: Number of active vendors
+          example: 5
+
+    DailySummaryRow:
+      type: object
+      required:
+        - id
+        - storeId
+        - date
+        - priceBandId
+        - categoryName
+        - bandPrice
+        - totalQtySold
+        - totalRevenue
+        - totalReturns
+        - totalRefunds
+      properties:
+        id:
+          type: integer
+          example: 88
+        storeId:
+          type: integer
+          example: 1
+        date:
+          type: string
+          format: date
+          example: '2025-06-04'
+        priceBandId:
+          type: integer
+          example: 5
+        categoryName:
+          type: string
+          example: Shirts
+        bandPrice:
+          type: number
+          example: 499.00
+        totalQtySold:
+          type: integer
+          example: 12
+        totalRevenue:
+          type: number
+          example: 5988.00
+        totalReturns:
+          type: integer
+          example: 1
+        totalRefunds:
+          type: number
+          example: 499.00
+
+    # ── Vendors ────────────────────────────────────────────────────────────────
+
+    SuppliedBand:
+      type: object
+      required: [bandId, price, categoryName]
+      properties:
+        bandId:
+          type: integer
+          example: 5
+        price:
+          type: number
+          example: 499.00
+        categoryName:
+          type: string
+          example: Shirts
+
+    Vendor:
+      type: object
+      required: [id, storeId, name, isActive, dues, suppliedBands, createdAt, updatedAt]
+      properties:
+        id:
+          type: integer
+          example: 2
+        storeId:
+          type: integer
+          example: 1
+        name:
+          type: string
+          example: Sunrise Textiles
+        phone:
+          type: string
+          nullable: true
+          example: '9123000001'
+        email:
+          type: string
+          nullable: true
+          example: null
+        city:
+          type: string
+          nullable: true
+          example: Surat
+        notes:
+          type: string
+          nullable: true
+          example: Delivers on Mondays
+        isActive:
+          type: boolean
+          example: true
+        dues:
+          type: number
+          format: float
+          description: Outstanding dues across unfulfilled reorders
+          example: 15000.00
+        suppliedBands:
+          type: array
+          items:
+            $ref: '#/components/schemas/SuppliedBand'
+        createdAt:
+          type: string
+          format: date-time
+          example: '2025-01-10T07:00:00.000Z'
+        updatedAt:
+          type: string
+          format: date-time
+          example: '2025-05-30T09:00:00.000Z'
+
+    CreateVendorRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 2
+          example: Horizon Garments
+        phone:
+          type: string
+          example: '9000111222'
+        city:
+          type: string
+          example: Ahmedabad
+        notes:
+          type: string
+          example: Specialises in cotton shirts
+
+    UpdateVendorRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 2
+          example: Horizon Garments Ltd
+        phone:
+          type: string
+          example: '9000111333'
+        city:
+          type: string
+          example: Vadodara
+        notes:
+          type: string
+          example: Updated notes
+
+    SuggestOrderItem:
+      type: object
+      required: [priceBandId, categoryName, bandPrice, dailyAvg, currentStock, suggestedQty]
+      properties:
+        priceBandId:
+          type: integer
+          example: 5
+        categoryName:
+          type: string
+          example: Shirts
+        bandPrice:
+          type: number
+          example: 499.00
+        dailyAvg:
+          type: number
+          format: float
+          description: Average units sold per day over the last 30 days
+          example: 3.2
+        currentStock:
+          type: integer
+          example: 12
+        suggestedQty:
+          type: integer
+          description: Suggested reorder quantity to cover 14 days of demand
+          example: 33
+
+    # ── Reorders ───────────────────────────────────────────────────────────────
+
+    ReorderItem:
+      type: object
+      required: [id, reorderId, priceBandId, categoryName, bandPrice, suggestedQty, finalQty]
+      properties:
+        id:
+          type: integer
+          example: 31
+        reorderId:
+          type: integer
+          example: 9
+        priceBandId:
+          type: integer
+          example: 5
+        categoryName:
+          type: string
+          example: Shirts
+        bandPrice:
+          type: number
+          example: 499.00
+        suggestedQty:
+          type: integer
+          example: 33
+        finalQty:
+          type: integer
+          example: 30
+
+    Reorder:
+      type: object
+      required: [id, storeId, vendorId, vendorName, createdBy, status, createdAt, items]
+      properties:
+        id:
+          type: integer
+          example: 9
+        storeId:
+          type: integer
+          example: 1
+        vendorId:
+          type: integer
+          example: 2
+        vendorName:
+          type: string
+          example: Sunrise Textiles
+        createdBy:
+          type: integer
+          example: 1
+        status:
+          type: string
+          enum: [draft, sent, acknowledged, fulfilled]
+          example: sent
+        messageText:
+          type: string
+          nullable: true
+          example: 'Hi Sunrise Textiles, please send: 30x Shirts ₹499. Please confirm.'
+        createdAt:
+          type: string
+          format: date-time
+          example: '2025-06-04T08:00:00.000Z'
+        sentAt:
+          type: string
+          format: date-time
+          nullable: true
+          example: '2025-06-04T08:00:00.000Z'
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReorderItem'
+
+    ReorderItemInput:
+      type: object
+      required: [priceBandId, categoryName, bandPrice, suggestedQty, finalQty]
+      properties:
+        priceBandId:
+          type: integer
+          example: 5
+        categoryName:
+          type: string
+          example: Shirts
+        bandPrice:
+          type: number
+          example: 499.00
+        suggestedQty:
+          type: integer
+          minimum: 0
+          example: 33
+        finalQty:
+          type: integer
+          minimum: 0
+          example: 30
+
+    CreateReorderRequest:
+      type: object
+      required: [vendorId, items]
+      properties:
+        vendorId:
+          type: integer
+          example: 2
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReorderItemInput'
+
+    UpdateReorderStatusRequest:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [draft, sent, acknowledged, fulfilled]
+          example: acknowledged
+
+    # ── Returns ────────────────────────────────────────────────────────────────
+
+    ReturnItemInput:
+      type: object
+      required: [saleItemId, quantity]
+      properties:
+        saleItemId:
+          type: integer
+          minimum: 1
+          example: 55
+        quantity:
+          type: integer
+          minimum: 1
+          example: 1
+
+    CreateReturnRequest:
+      type: object
+      required: [saleId, type, items]
+      properties:
+        saleId:
+          type: integer
+          minimum: 1
+          example: 204
+        type:
+          type: string
+          enum: [return, exchange]
+          example: return
+        items:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/ReturnItemInput'
+
+    CreateReturnResult:
+      type: object
+      required: [id, createdAt]
+      properties:
+        id:
+          type: integer
+          example: 18
+        createdAt:
+          type: string
+          format: date-time
+          example: '2025-06-05T16:00:00.000Z'
+
+    ReturnRecord:
+      type: object
+      required: [id, storeId, saleId, staffId, type, createdAt]
+      properties:
+        id:
+          type: integer
+          example: 18
+        storeId:
+          type: integer
+          example: 1
+        saleId:
+          type: integer
+          example: 204
+        staffId:
+          type: integer
+          example: 7
+        type:
+          type: string
+          enum: [return, exchange]
+          example: return
+        createdAt:
+          type: string
+          format: date-time
+          example: '2025-06-05T16:00:00.000Z'
+
+    # ── Audit ──────────────────────────────────────────────────────────────────
+
+    AuditLogEntry:
+      type: object
+      required: [id, timestamp, type, recordsPruned]
+      properties:
+        id:
+          type: integer
+          example: 4
+        timestamp:
+          type: string
+          format: date-time
+          example: '2025-06-01T00:00:00.000Z'
+        type:
+          type: string
+          enum: [auto, manual]
+          example: manual
+        recordsPruned:
+          type: integer
+          example: 42
+
+    WipeRequest:
+      type: object
+      required: [password]
+      properties:
+        password:
+          type: string
+          minLength: 1
+          description: Owner's current password for confirmation
+          example: ownerpassword123
