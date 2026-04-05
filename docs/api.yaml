@@ -1,11 +1,111 @@
 openapi: 3.0.3
 info:
   title: SmallBiz Retail Management API
-  description: >
-    Backend API for the SmallBiz retail management platform (Claudius).
-    Supports store registration, inventory, sales, attendance, staff, vendors,
-    reorders, returns, and audit operations.
   version: 1.0.0
+  description: |
+    ## SmallBiz — Team Claudius
+
+    Backend API for a retail shop management platform built for Indian garment
+    and general retail stores. Covers billing, inventory, staff management,
+    procurement, GPS-based attendance, and data-privacy compliance.
+
+    ---
+
+    ## User Stories & API Mapping
+
+    ### 🧑‍💼 Owner / Manager — Store Setup
+    | User Story | API |
+    |---|---|
+    | As an owner, I want to register my store so I can start using the platform | `POST /auth/register` |
+    | As an owner, I want to log in with my email and password | `POST /auth/login` |
+    | As an owner, I want to update my store name, address and logo | `PATCH /store` |
+    | As an owner, I want to set the store GPS location and radius for attendance | `PATCH /store/gps-settings` |
+    | As an owner, I want to switch between structured and ephemeral billing modes | `PATCH /store/billing-mode` |
+    | As an owner, I want to configure how long ephemeral sale data is retained | `PATCH /store/retention` |
+
+    ### 👥 Staff & User Management
+    | User Story | API |
+    |---|---|
+    | As an owner, I want to add staff members with a phone and PIN | `POST /users` |
+    | As an owner, I want to add managers with an email and password | `POST /users` |
+    | As an owner, I want to view all users in my store | `GET /users` |
+    | As an owner, I want to update a user's name or contact details | `PATCH /users/:id` |
+    | As an owner, I want to deactivate a staff member | `DELETE /users/:id` |
+    | As a user, I want to change my own password | `PATCH /users/:id/password` |
+    | As a staff member, I want to change my PIN | `PATCH /users/:id/pin` |
+    | As a user, I want to upload my profile avatar | `PATCH /users/:id/avatar` |
+
+    ### 🕐 Attendance & GPS
+    | User Story | API |
+    |---|---|
+    | As a staff member, I want to clock in at the start of my shift | `POST /attendance/clock-in` |
+    | As a staff member, I want to clock out at the end of my shift | `POST /attendance/clock-out` |
+    | As a manager, I want to see who is currently clocked in today | `GET /attendance/today` |
+    | As a manager, I want to force clock-out a staff member who forgot | `PATCH /attendance/force-clockout/:userId` |
+    | As an owner, I want GPS verification so staff must be at the store to clock in | `PATCH /store/gps-settings` (gpsRequireClockIn) |
+
+    ### 🛒 Point of Sale
+    | User Story | API |
+    |---|---|
+    | As a staff member, I want to create a sale with multiple items | `POST /sales` |
+    | As a staff member, I want to sell items by price band (FIFO stock deduction) | `POST /sales` (priceBandId) |
+    | As a staff member, I want to add a custom-priced item without stock deduction | `POST /sales` (priceBandId: 0) |
+    | As a staff member, I want to attach a customer's name and phone to a sale | `POST /sales` (customerName, customerPhone) |
+    | As a manager, I want to process a return or exchange for a previous sale | `POST /returns` |
+
+    ### 📦 Inventory Management
+    | User Story | API |
+    |---|---|
+    | As an owner, I want to create product categories | `POST /categories` |
+    | As an owner, I want to set price bands (SKUs) under each category | `POST /price-bands` |
+    | As an owner, I want to add incoming stock batches with cost price | `POST /inventory/batches` |
+    | As a manager, I want to view all stock batches with filters | `GET /inventory/batches?filter=` |
+    | As a manager, I want to see a stock matrix by category and price band | `GET /inventory/matrix` |
+    | As a manager, I want to adjust batch quantity after a stock count | `PATCH /inventory/batches/:id` (adjust) |
+    | As a manager, I want to mark units as defective | `PATCH /inventory/batches/:id` (defective) |
+    | As a manager, I want to close a batch that is no longer active | `PATCH /inventory/batches/:id` (close) |
+
+    ### 🚚 Procurement & Vendors
+    | User Story | API |
+    |---|---|
+    | As an owner, I want to add and manage vendors | `POST /vendors`, `PATCH /vendors/:id` |
+    | As a manager, I want to get suggested reorder quantities based on sales trends | `GET /vendors/:id/suggest-order` |
+    | As a manager, I want to create a purchase reorder for a vendor | `POST /reorders` |
+    | As a manager, I want to update the status of a reorder (sent → acknowledged → fulfilled) | `PATCH /reorders/:id` |
+    | As a manager, I want to see the WhatsApp-ready message text for a reorder | `GET /reorders` (messageText field) |
+
+    ### 📊 Dashboard & Reports
+    | User Story | API |
+    |---|---|
+    | As an owner, I want to see weekly/monthly revenue, units sold, and top SKU | `GET /dashboard/summary` |
+    | As an owner, I want to see daily sales data for charting | `GET /dashboard/daily-summary?range=weekly|monthly` |
+    | As a manager, I want to see staff sales performance leaderboard | `GET /staff/leaderboard` |
+
+    ### 🔒 Audit & Compliance
+    | User Story | API |
+    |---|---|
+    | As an owner, I want to view the audit log of data wipe events | `GET /audit/log` |
+    | As an owner, I want to wipe ephemeral sale data older than retention period | `POST /audit/wipe` |
+
+    ---
+
+    ## Authentication
+
+    All endpoints except `POST /auth/register` and `POST /auth/login` require a
+    **Bearer JWT token** in the `Authorization` header.
+
+    ```
+    Authorization: Bearer <token>
+    ```
+
+    Tokens are returned on login and are valid for the duration set in `JWT_EXPIRES_IN`.
+
+    ## Roles
+    | Role | Permissions |
+    |---|---|
+    | `owner` | Full access to all endpoints |
+    | `manager` | Access to operations, inventory, staff roster; no billing/audit/wipe |
+    | `staff` | Clock-in/out, create sales, view own data only |
 
 servers:
   - url: http://localhost:3001/api
@@ -16,31 +116,31 @@ security:
 
 tags:
   - name: Auth
-    description: Registration and login (no auth required)
+    description: Registration and login — no authentication required
   - name: Store
-    description: Store profile and settings management
+    description: Store profile, GPS settings, billing mode, and retention policy
   - name: Users
-    description: User management within a store
+    description: User CRUD — add staff/managers, update credentials and avatars
   - name: Categories
     description: Product category management
   - name: PriceBands
-    description: Price band management and stock queries
+    description: Price band (SKU) management and stock queries
   - name: Inventory
-    description: Inventory batch management and stock matrix
+    description: Inventory batch management, stock matrix, adjustments
   - name: Sales
-    description: Sales transactions
+    description: "User story: As staff, I want to bill customers with FIFO stock deduction and optional customer upsert"
   - name: Attendance
-    description: Staff clock-in / clock-out
+    description: "User story: As staff, I want to clock in/out; as manager I want GPS-verified roster visibility"
   - name: Staff
-    description: Staff leaderboard
+    description: "User story: As a manager, I want to see each staff member's daily sales performance"
   - name: Dashboard
-    description: KPI summaries and daily sales data
+    description: "User story: As an owner/manager, I want revenue KPIs and daily sales charts"
   - name: Vendors
-    description: Vendor management and suggested order
+    description: "User story: As a manager, I want to manage vendors and get AI-suggested reorder quantities"
   - name: Reorders
-    description: Purchase reorder management
+    description: "User story: As a manager, I want to create purchase orders and track them to fulfillment"
   - name: Returns
-    description: Sales return and exchange management
+    description: "User story: As staff, I want to process returns/exchanges and restore stock automatically"
   - name: Audit
     description: Audit log and ephemeral data wipe
 
