@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useAuthStore, ROLE_DEFAULT } from '../store/roleStore'
-import { useUsersStore } from '../store/usersStore'
-import { useCredStore } from '../store/credentialsStore'
+import { api } from '../lib/api'
+import type { User } from '../types'
 
 // ── Left panel ──────────────────────────────────────────────────────────────
 function LeftPanel() {
@@ -153,58 +153,74 @@ function PinSheet({ onClose, onVerify, error, loading }: {
 }
 
 // ── Main page ───────────────────────────────────────────────────────────────
+interface LoginResponse { token: string; user: User }
+
 export default function LoginPage() {
   const navigate   = useNavigate()
   const location   = useLocation()
   const registered = (location.state as { registered?: boolean } | null)?.registered
 
-  const login  = useAuthStore(s => s.login)
-  const users  = useUsersStore(s => s.users)
-  const verify = useCredStore(s => s.verify)
+  const login = useAuthStore(s => s.login)
 
-  const [identifier, setIdentifier] = useState('')
-  const [password,   setPassword]   = useState('')
-  const [showPass,   setShowPass]   = useState(false)
-  const [error,      setError]      = useState('')
-  const [loading,    setLoading]    = useState(false)
-  const [pinUser,    setPinUser]    = useState<(typeof users)[0] | null>(null)
-  const [pinError,   setPinError]   = useState('')
-  const [ownerUser,  setOwnerUser]  = useState<(typeof users)[0] | null>(null)
+  const [identifier,   setIdentifier]   = useState('')
+  const [password,     setPassword]     = useState('')
+  const [showPass,     setShowPass]     = useState(false)
+  const [error,        setError]        = useState('')
+  const [loading,      setLoading]      = useState(false)
 
-  function doLogin(user: (typeof users)[0]) {
-    login(user)
+  // Staff = show PIN sheet; owner/manager = show password field
+  const [isStaffPhone, setIsStaffPhone] = useState(false)
+  const [showPinSheet, setShowPinSheet] = useState(false)
+  const [pinPhone,     setPinPhone]     = useState('')
+  const [pinError,     setPinError]     = useState('')
+  const [pinLoading,   setPinLoading]   = useState(false)
+  const [showPassword, setShowPassword] = useState(false)
+
+  function doLogin(user: User, token: string) {
+    login(user, token)
     navigate(ROLE_DEFAULT[user.role as keyof typeof ROLE_DEFAULT], { replace: true })
   }
 
-  function handleIdentifierSubmit(e: React.FormEvent) {
+  async function handleIdentifierSubmit(e: React.FormEvent) {
     e.preventDefault()
-    if (!identifier.trim()) { setError('Please enter your email or phone number.'); return }
-    const found = users.find(u => u.role === 'staff' ? u.phone === identifier.trim() : u.email === identifier.trim())
-    if (!found) { setError('No account found.'); return }
+    const id = identifier.trim()
+    if (!id) { setError('Please enter your email or phone number.'); return }
     setError('')
-    if (found.role === 'staff') setPinUser(found)
-    else setOwnerUser(found)
+    // phone = no @ → staff PIN flow; email → password flow
+    if (!id.includes('@')) {
+      setIsStaffPhone(true)
+      setPinPhone(id)
+      setShowPinSheet(true)
+    } else {
+      setIsStaffPhone(false)
+      setShowPassword(true)
+    }
   }
 
-  function handlePinVerify(pin: string) {
-    if (!pinUser) return
-    setLoading(true)
+  async function handlePinVerify(pin: string) {
+    setPinLoading(true)
     setPinError('')
-    setTimeout(() => {
-      if (!verify(pinUser.id, pin)) { setPinError('Incorrect PIN. Try again.'); setLoading(false); return }
-      doLogin(pinUser)
-    }, 250)
+    try {
+      const res = await api.post<LoginResponse>('/auth/login', { identifier: pinPhone, credential: pin }, false)
+      doLogin(res.user, res.token)
+    } catch (err: unknown) {
+      setPinError(err instanceof Error ? err.message : 'Incorrect PIN. Try again.')
+      setPinLoading(false)
+    }
   }
 
-  function handlePasswordSubmit(e: React.FormEvent) {
+  async function handlePasswordSubmit(e: React.FormEvent) {
     e.preventDefault()
     if (!password) { setError('Please enter your password.'); return }
-    if (!ownerUser) return
     setLoading(true)
-    setTimeout(() => {
-      if (!verify(ownerUser.id, password)) { setError('Incorrect password.'); setLoading(false); return }
-      doLogin(ownerUser)
-    }, 300)
+    setError('')
+    try {
+      const res = await api.post<LoginResponse>('/auth/login', { identifier: identifier.trim(), credential: password }, false)
+      doLogin(res.user, res.token)
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Invalid credentials.')
+      setLoading(false)
+    }
   }
 
   return (
@@ -224,24 +240,24 @@ export default function LoginPage() {
               B
             </div>
             <h1 className="text-2xl font-black tracking-tight" style={{ color: 'var(--dark)' }}>
-              {ownerUser ? 'Enter password' : 'Sign in'}
+              {showPassword ? 'Enter password' : 'Sign in'}
             </h1>
             <p className="text-sm mt-1" style={{ color: 'var(--text-3)' }}>
-              {ownerUser
-                ? <>{ownerUser.name} · <span className="capitalize">{ownerUser.role}</span> · <button onClick={() => { setOwnerUser(null); setPassword(''); setError('') }} className="underline" style={{ color: 'var(--primary)' }}>Change</button></>
+              {showPassword
+                ? <>{identifier.trim()} · <button onClick={() => { setShowPassword(false); setPassword(''); setError('') }} className="underline" style={{ color: 'var(--primary)' }}>Change</button></>
                 : 'Enter your email or phone number'
               }
             </p>
           </div>
 
-          {registered && !ownerUser && (
+          {registered && !showPassword && (
             <div className="rounded-xl px-4 py-3 text-sm font-medium mb-6" style={{ background: '#ECFDF5', color: '#065F46', border: '1px solid #A7F3D0' }}>
               Store created. Sign in to continue.
             </div>
           )}
 
           {/* Identifier step */}
-          {!ownerUser && (
+          {!showPassword && (
             <form onSubmit={handleIdentifierSubmit} className="flex flex-col gap-4">
               <div className="flex flex-col gap-1.5">
                 <label className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--text-3)' }}>Email / Phone</label>
@@ -255,8 +271,8 @@ export default function LoginPage() {
             </form>
           )}
 
-          {/* Password step */}
-          {ownerUser && (
+          {/* Password step (owner / manager) */}
+          {showPassword && (
             <form onSubmit={handlePasswordSubmit} className="flex flex-col gap-4">
               <div className="flex flex-col gap-1.5">
                 <label className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--text-3)' }}>Password</label>
@@ -287,12 +303,12 @@ export default function LoginPage() {
         </div>
       </div>
 
-      {pinUser && (
+      {showPinSheet && (
         <PinSheet
-          onClose={() => { setPinUser(null); setPinError(''); setLoading(false) }}
+          onClose={() => { setShowPinSheet(false); setPinError(''); setPinLoading(false) }}
           onVerify={handlePinVerify}
           error={pinError}
-          loading={loading}
+          loading={pinLoading}
         />
       )}
     </div>

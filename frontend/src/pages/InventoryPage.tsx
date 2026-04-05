@@ -1,6 +1,7 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import type { BatchFilter, InventoryBatchDetail, AddBatchForm } from '../types'
-import { MOCK_BATCHES, MOCK_MATRIX_ROWS, MOCK_VENDORS, MOCK_CATEGORIES, MOCK_PRICE_BANDS } from '../lib/mock'
+import type { Category, PriceBand, VendorWithDues, MatrixRow } from '../types'
+import { api } from '../lib/api'
 import PageHeader from '../components/ui/PageHeader'
 import TabBar from '../components/ui/TabBar'
 import Modal from '../components/ui/Modal'
@@ -19,7 +20,13 @@ export default function InventoryPage() {
   const [tab, setTab] = useState('matrix')
   const [filter, setFilter] = useState<BatchFilter>('all')
   const [showForm, setShowForm] = useState(false)
-  const [batches, setBatches] = useState<InventoryBatchDetail[]>(MOCK_BATCHES)
+
+  const [batches, setBatches] = useState<InventoryBatchDetail[]>([])
+  const [matrixRows, setMatrixRows] = useState<MatrixRow[]>([])
+  const [vendors, setVendors] = useState<VendorWithDues[]>([])
+  const [categories, setCategories] = useState<Category[]>([])
+  const [priceBands, setPriceBands] = useState<PriceBand[]>([])
+  const [loading, setLoading] = useState(true)
 
   // Adjust qty modal
   const [adjustId, setAdjustId] = useState<number | null>(null)
@@ -29,20 +36,31 @@ export default function InventoryPage() {
 
   const lowStockCount = batches.filter(b => b.quantityRemaining < 10).length
 
-  const filteredBatches = batches.filter(b => {
-    if (filter === 'low_stock')    return b.quantityRemaining < 10
-    if (filter === 'aging')        return b.ageInDays > 60
-    if (filter === 'new_arrivals') return b.ageInDays <= 7
-    return true
-  })
+  const filteredBatches = batches
 
-  function handleAction(id: number, action: 'close' | 'adjust' | 'defective') {
-    if (action === 'close') {
-      setBatches(prev =>
-        prev.map(b => b.id === id ? { ...b, quantityRemaining: 0, updatedAt: new Date().toISOString() } : b)
-      )
-      return
-    }
+  // Fetch static data on mount
+  useEffect(() => {
+    Promise.all([
+      api.get<MatrixRow[]>('/inventory/matrix'),
+      api.get<VendorWithDues[]>('/vendors'),
+      api.get<Category[]>('/categories'),
+      api.get<PriceBand[]>('/price-bands'),
+    ]).then(([matrix, vends, cats, bands]) => {
+      setMatrixRows(matrix)
+      setVendors(vends)
+      setCategories(cats)
+      setPriceBands(bands)
+    }).catch(console.error).finally(() => setLoading(false))
+  }, [])
+
+  // Fetch batches when filter changes
+  useEffect(() => {
+    api.get<InventoryBatchDetail[]>(`/inventory/batches?filter=${filter}`)
+      .then(setBatches)
+      .catch(console.error)
+  }, [filter])
+
+  async function handleAction(id: number, action: 'close' | 'adjust' | 'defective') {
     if (action === 'adjust') {
       const batch = batches.find(b => b.id === id)
       if (!batch) return
@@ -50,55 +68,35 @@ export default function InventoryPage() {
       setAdjustId(id)
       return
     }
-    if (action === 'defective') {
-      setBatches(prev =>
-        prev.map(b => b.id === id
-          ? { ...b, notes: (b.notes ? b.notes + ' [DEFECTIVE]' : '[DEFECTIVE]'), updatedAt: new Date().toISOString() }
-          : b
-        )
-      )
-    }
+    try {
+      const updated = await api.patch<InventoryBatchDetail>(`/inventory/batches/${id}`, { action })
+      setBatches(prev => prev.map(b => b.id === id ? updated : b))
+    } catch (err) { console.error(err) }
   }
 
-  function handleAdjustSave() {
+  async function handleAdjustSave() {
     const newQty = parseInt(adjustQty, 10)
     if (isNaN(newQty) || newQty < 0) return
-    setBatches(prev =>
-      prev.map(b => b.id === adjustId ? { ...b, quantityRemaining: newQty, updatedAt: new Date().toISOString() } : b)
-    )
-    setAdjustId(null)
-    setAdjustQty('')
+    try {
+      const updated = await api.patch<InventoryBatchDetail>(`/inventory/batches/${adjustId}`, { action: 'adjust', quantity: newQty })
+      setBatches(prev => prev.map(b => b.id === adjustId ? updated : b))
+      setAdjustId(null)
+      setAdjustQty('')
+    } catch (err) { console.error(err) }
   }
 
-  function handleSaveBatch(data: AddBatchForm) {
-    const vendor   = MOCK_VENDORS.find(v => v.id === data.vendorId)
-    const category = MOCK_CATEGORIES.find(c => c.id === data.categoryId)
-    const band     = MOCK_PRICE_BANDS.find(b => b.id === data.priceBandId)
-    if (!category || !band) return
-
-    const newBatch: InventoryBatchDetail = {
-      id: batches.length + 1,
-      storeId: 1,
-      priceBandId: data.priceBandId,
-      vendorId: data.vendorId,
-      vendorName: vendor?.name ?? null,
-      categoryName: category.name,
-      bandPrice: band.price,
-      quantityAdded: data.quantity,
-      quantityRemaining: data.quantity,
-      costPrice: data.costPrice,
-      addedBy: null,
-      notes: data.notes ?? null,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      ageInDays: 0,
-      margin: data.costPrice
-        ? Math.round(((band.price - data.costPrice) / band.price) * 100)
-        : null,
-    }
-
-    setBatches(prev => [newBatch, ...prev])
-    setShowForm(false)
+  async function handleSaveBatch(data: AddBatchForm) {
+    try {
+      const newBatch = await api.post<InventoryBatchDetail>('/inventory/batches', {
+        priceBandId: data.priceBandId,
+        vendorId: data.vendorId,
+        quantityAdded: data.quantity,
+        costPrice: data.costPrice,
+        notes: data.notes,
+      })
+      setBatches(prev => [newBatch, ...prev])
+      setShowForm(false)
+    } catch (err) { console.error(err) }
   }
 
   return (
@@ -115,7 +113,11 @@ export default function InventoryPage() {
 
       <TabBar tabs={TABS} active={tab} onChange={setTab} className="mb-5" />
 
-      {tab === 'matrix' && <MatrixView rows={MOCK_MATRIX_ROWS} />}
+      {tab === 'matrix' && (
+        loading
+          ? <div className="animate-pulse rounded-xl bg-[var(--surface-raised)] h-48" />
+          : <MatrixView rows={matrixRows} />
+      )}
 
       {tab === 'batches' && (
         <div className="flex flex-col gap-4">
@@ -127,9 +129,9 @@ export default function InventoryPage() {
       {/* Add batch modal */}
       <Modal open={showForm} onClose={() => setShowForm(false)} title="Add Inventory Batch">
         <BatchForm
-          vendors={MOCK_VENDORS}
-          categories={MOCK_CATEGORIES}
-          priceBands={MOCK_PRICE_BANDS}
+          vendors={vendors}
+          categories={categories}
+          priceBands={priceBands}
           onSave={handleSaveBatch}
           onCancel={() => setShowForm(false)}
         />

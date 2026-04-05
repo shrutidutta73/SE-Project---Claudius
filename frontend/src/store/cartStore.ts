@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { api } from '../lib/api'
 import type { CartItem, PaymentMethod } from '../types'
 
 interface CartStore {
@@ -13,7 +14,7 @@ interface CartStore {
   setCustomer: (name: string, phone: string) => void
   togglePrivacyMode: () => void
   clear: () => void
-  checkout: (method: PaymentMethod) => void
+  checkout: (method: PaymentMethod) => Promise<void>
 
   total: () => number
 }
@@ -65,9 +66,26 @@ export const useCartStore = create<CartStore>((set, get) => ({
 
   clear: () => set({ items: [], customerName: '', customerPhone: '' }),
 
-  checkout: (_method) => {
-    // In real app: POST /api/sales with items + customer + paymentMethod + isEphemeral
-    get().clear()
+  checkout: async (method: PaymentMethod) => {
+    const { items, customerName, customerPhone, total, clear } = get()
+    try {
+      await api.post('/sales', {
+        items: items.map(i => ({
+          priceBandId: i.priceBandId,
+          categoryName: i.categoryName,
+          price: i.price,
+          quantity: i.quantity,
+          subtotal: i.subtotal,
+        })),
+        customerName: customerName || undefined,
+        customerPhone: customerPhone || undefined,
+        paymentMethod: method,
+        discountAmount: 0,
+      })
+    } catch (err) {
+      console.error('Checkout failed:', err)
+    }
+    clear()
   },
 
   total: () => get().items.reduce((sum, i) => sum + i.subtotal, 0),

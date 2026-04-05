@@ -1,19 +1,14 @@
 import { useState, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
 import Modal from '../components/ui/Modal'
 import Input from '../components/ui/Input'
 import Badge from '../components/ui/Badge'
 import ClockWidget from '../components/staff/ClockWidget'
-import Leaderboard from '../components/staff/Leaderboard'
-import { MOCK_STORE, MOCK_LEADERBOARD } from '../lib/mock'
 import { getInitials, formatCurrencyFull } from '../lib/utils'
 import { useAuthStore, type Role } from '../store/roleStore'
-import { useUsersStore } from '../store/usersStore'
-import { useCredStore } from '../store/credentialsStore'
 import { useGpsSettingsStore } from '../store/gpsSettingsStore'
-import { useRosterStore } from '../store/rosterStore'
 import AvatarUpload from '../components/ui/AvatarUpload'
-import type { User } from '../types'
+import { api } from '../lib/api'
+import type { User, Store, StaffLeaderboardEntry } from '../types'
 
 // ── Icons ─────────────────────────────────────────────────
 const IcEdit   = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
@@ -228,7 +223,10 @@ function useShiftDuration(clockInTime: Date | null) {
 }
 
 // ── Staff personal dashboard ──────────────────────────────
-function StaffDashboard() {
+interface StaffDashboardProps {
+  store: Store | null
+}
+function StaffDashboard({ store }: StaffDashboardProps) {
   const currentUser  = useAuthStore(s => s.currentUser)!
   const clockedIn    = useAuthStore(s => s.clockedIn)
   const clockInTime  = useAuthStore(s => s.clockInTime)
@@ -238,9 +236,73 @@ function StaffDashboard() {
   const getPolicy    = useGpsSettingsStore(s => s.getPolicy)
   const gpsPolicy    = getPolicy(currentUser.id)
 
-  const entry        = MOCK_LEADERBOARD.find(e => e.userId === currentUser.id)
-  const revenueToday = entry?.revenueToday ?? 0
-  const salesCount   = entry?.salesCountToday ?? 0
+  const [revenueToday, setRevenueToday] = useState(0)
+  const [salesCount,   setSalesCount]   = useState(0)
+
+  useEffect(() => {
+    api.get<StaffLeaderboardEntry[]>('/staff/leaderboard')
+      .then(entries => {
+        const entry = entries.find(e => e.userId === currentUser.id)
+        if (entry) {
+          setRevenueToday(entry.revenueToday)
+          setSalesCount(entry.salesCountToday)
+        }
+      })
+      .catch(() => {/* ignore */})
+  }, [currentUser.id])
+
+  // Fallback store used only if parent hasn't loaded yet
+  const effectiveStore: Store = store ?? {
+    id: 0,
+    name: '',
+    address: '',
+    gpsLatitude: 0,
+    gpsLongitude: 0,
+    gpsRadiusM: 500,
+    billingMode: 'structured',
+    retentionDays: null,
+    createdAt: '',
+    updatedAt: '',
+  }
+
+  async function handleClock(action: 'in' | 'out') {
+    if (!navigator.geolocation) {
+      // No geolocation — call with zeros
+      try {
+        if (action === 'in') {
+          await api.post('/attendance/clock-in', { lat: 0, lng: 0 })
+        } else {
+          await api.post('/attendance/clock-out', { lat: 0, lng: 0 })
+        }
+      } catch {/* ignore */}
+      setClockedIn(action === 'in')
+      return
+    }
+    navigator.geolocation.getCurrentPosition(
+      async pos => {
+        const { latitude: lat, longitude: lng } = pos.coords
+        try {
+          if (action === 'in') {
+            await api.post('/attendance/clock-in', { lat, lng })
+          } else {
+            await api.post('/attendance/clock-out', { lat, lng })
+          }
+        } catch {/* ignore */}
+        setClockedIn(action === 'in')
+      },
+      async () => {
+        // Position error — fall back to zeros
+        try {
+          if (action === 'in') {
+            await api.post('/attendance/clock-in', { lat: 0, lng: 0 })
+          } else {
+            await api.post('/attendance/clock-out', { lat: 0, lng: 0 })
+          }
+        } catch {/* ignore */}
+        setClockedIn(action === 'in')
+      },
+    )
+  }
 
   return (
     <div className="flex flex-col items-center">
@@ -249,10 +311,10 @@ function StaffDashboard() {
         {/* Clock widget */}
         <ClockWidget
           user={currentUser}
-          store={MOCK_STORE}
+          store={effectiveStore}
           clockedIn={clockedIn}
           gpsPolicy={gpsPolicy}
-          onClock={action => setClockedIn(action === 'in')}
+          onClock={handleClock}
         />
 
         {/* Active shift panel */}
@@ -291,28 +353,134 @@ function StaffDashboard() {
   )
 }
 
+// ── Roster entry shape from leaderboard ──────────────────
+interface RosterEntry {
+  userId:       number
+  name:         string
+  clockedIn:    boolean
+  clockInAt:    string | null
+  clockOutAt:   string | null
+  revenueToday: number
+}
+
 // ── Main page ─────────────────────────────────────────────
 export default function StaffPage() {
-  const navigate     = useNavigate()
   const currentUser  = useAuthStore(s => s.currentUser)
-  const clockedIn    = useAuthStore(s => s.clockedIn)
-  const setClockedIn = useAuthStore(s => s.setClockedIn)
   const role         = (currentUser?.role ?? 'staff') as Role
 
-  const { users, addUser, updateUser, updateAvatar, deleteUser } = useUsersStore()
-  const { setPassword, removePassword } = useCredStore()
+  const [users,   setUsers]   = useState<User[]>([])
+  const [store,   setStore]   = useState<Store | null>(null)
+  const [rosterEntries, setRosterEntries] = useState<Record<number, RosterEntry>>({})
 
-  const rosterEntries  = useRosterStore(s => s.entries)
-  const forceClockOut  = useRosterStore(s => s.forceClockOut)
   const { globalClockIn, globalClockOut, setGlobal } = useGpsSettingsStore()
   const [tab, setTab] = useState<'staff' | 'roster'>('staff')
-  const [showAdd,     setShowAdd]     = useState(false)
-  const [editTarget,  setEditTarget]  = useState<User | null>(null)
+  const [showAdd,      setShowAdd]      = useState(false)
+  const [editTarget,   setEditTarget]   = useState<User | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<User | null>(null)
+
+  // Fetch users and store on mount; seed GPS toggles from store
+  useEffect(() => {
+    api.get<User[]>('/users').then(setUsers).catch(() => {})
+    api.get<Store>('/store').then(s => {
+      setStore(s)
+      setGlobal({ clockIn: s.gpsRequireClockIn ?? false, clockOut: s.gpsRequireClockOut ?? false })
+    }).catch(() => {})
+  }, []) // eslint-disable-line
+
+  // Fetch leaderboard to build roster entries (for manager view)
+  useEffect(() => {
+    if (role !== 'manager') return
+    api.get<StaffLeaderboardEntry[]>('/staff/leaderboard')
+      .then(entries => {
+        const map: Record<number, RosterEntry> = {}
+        for (const e of entries) {
+          if (e.role === 'staff') {
+            map[e.userId] = {
+              userId:       e.userId,
+              name:         e.name,
+              clockedIn:    e.clockedIn,
+              clockInAt:    e.checkInAt,
+              clockOutAt:   null,
+              revenueToday: e.revenueToday,
+            }
+          }
+        }
+        setRosterEntries(map)
+      })
+      .catch(() => {})
+  }, [role])
+
+  async function handleForceClockOut(userId: number) {
+    try {
+      await api.patch(`/attendance/force-clockout/${userId}`, {})
+      setRosterEntries(prev => {
+        const existing = prev[userId]
+        if (!existing) return prev
+        return {
+          ...prev,
+          [userId]: {
+            ...existing,
+            clockedIn:  false,
+            clockOutAt: new Date().toISOString(),
+          },
+        }
+      })
+    } catch {/* ignore */}
+  }
+
+  async function handleAddManager(name: string, phone: string, email?: string, password?: string) {
+    try {
+      const newUser = await api.post<User>('/users', { name, phone, email, role: 'manager', password })
+      setUsers(prev => [...prev, newUser])
+      setShowAdd(false)
+    } catch {/* ignore */}
+  }
+
+  async function handleAddStaff(name: string, phone: string, _email?: string, _password?: string, pin?: string) {
+    try {
+      const newUser = await api.post<User>('/users', { name, phone, role: 'staff', pin })
+      setUsers(prev => [...prev, newUser])
+      setShowAdd(false)
+    } catch {/* ignore */}
+  }
+
+  async function handleUpdateUser(id: number, patch: { name: string; phone: string; email?: string }) {
+    try {
+      const updated = await api.patch<User>(`/users/${id}`, patch)
+      setUsers(prev => prev.map(u => u.id === id ? updated : u))
+      setEditTarget(null)
+    } catch {/* ignore */}
+  }
+
+  async function handleUpdateStaff(id: number, name: string, phone: string, pin?: string) {
+    try {
+      const updated = await api.patch<User>(`/users/${id}`, { name, phone })
+      setUsers(prev => prev.map(u => u.id === id ? updated : u))
+      if (pin) {
+        await api.patch(`/users/${id}/pin`, { pin })
+      }
+      setEditTarget(null)
+    } catch {/* ignore */}
+  }
+
+  async function handleDeleteUser(id: number) {
+    try {
+      await api.del(`/users/${id}`)
+      setUsers(prev => prev.filter(u => u.id !== id))
+      setDeleteTarget(null)
+    } catch {/* ignore */}
+  }
+
+  async function handleAvatarSave(userId: number, dataUrl: string) {
+    try {
+      const updated = await api.patch<User>(`/users/${userId}/avatar`, { avatar: dataUrl })
+      setUsers(prev => prev.map(u => u.id === userId ? updated : u))
+    } catch {/* ignore */}
+  }
 
   // ── STAFF VIEW ───────────────────────────────────────────
   if (role === 'staff') {
-    return <StaffDashboard />
+    return <StaffDashboard store={store} />
   }
 
   // ── OWNER VIEW: manage managers ──────────────────────────
@@ -344,7 +512,7 @@ export default function StaffPage() {
                 isCurrentUser={u.id === currentUser?.id}
                 onEdit={setEditTarget}
                 onDelete={setDeleteTarget}
-                onAvatarSave={dataUrl => updateAvatar(u.id, dataUrl)}
+                onAvatarSave={dataUrl => handleAvatarSave(u.id, dataUrl)}
               />
             ))
           )}
@@ -355,12 +523,7 @@ export default function StaffPage() {
           <UserForm
             withEmail
             withPassword
-            onSubmit={(name, phone, email, password) => {
-              const newId = Math.max(...users.map(u => u.id)) + 1
-              addUser({ name, phone, email, role: 'manager' })
-              if (password) setPassword(newId, password)
-              setShowAdd(false)
-            }}
+            onSubmit={handleAddManager}
             onCancel={() => setShowAdd(false)}
             submitLabel="Add Manager"
           />
@@ -372,7 +535,7 @@ export default function StaffPage() {
             <UserForm
               withEmail
               initial={{ name: editTarget.name, phone: editTarget.phone, email: editTarget.email ?? '' }}
-              onSubmit={(name, phone, email) => { updateUser(editTarget.id, { name, phone, email }); setEditTarget(null) }}
+              onSubmit={(name, phone, email) => handleUpdateUser(editTarget.id, { name, phone, email })}
               onCancel={() => setEditTarget(null)}
               submitLabel="Save Changes"
             />
@@ -391,7 +554,7 @@ export default function StaffPage() {
                 <button
                   className="btn flex-1 text-white"
                   style={{ background: 'var(--danger)' }}
-                  onClick={() => { deleteUser(deleteTarget.id); removePassword(deleteTarget.id); setDeleteTarget(null) }}
+                  onClick={() => handleDeleteUser(deleteTarget.id)}
                 >
                   Remove
                 </button>
@@ -406,10 +569,10 @@ export default function StaffPage() {
   // ── MANAGER VIEW: manage staff ───────────────────────────
   const staff        = users.filter(u => u.role === 'staff')
   const onShift      = Object.values(rosterEntries).filter(e => e.clockedIn).length
-  const totalRevenue = MOCK_LEADERBOARD.reduce((s, e) => s + e.revenueToday, 0)
+  const totalRevenue = Object.values(rosterEntries).reduce((s, e) => s + e.revenueToday, 0)
 
   // Anomaly: still clocked in from > 9 hours ago
-  function getAnomalyHours(entry: typeof rosterEntries[number]) {
+  function getAnomalyHours(entry: RosterEntry) {
     if (!entry.clockedIn || !entry.clockInAt) return null
     const hours = (Date.now() - new Date(entry.clockInAt).getTime()) / 36e5
     return hours > 9 ? hours : null
@@ -472,14 +635,28 @@ export default function StaffPage() {
               label="Require GPS on Clock In"
               description="Staff must be within store radius to clock in"
               active={globalClockIn}
-              onChange={v => setGlobal({ clockIn: v })}
+              onChange={v => {
+                setGlobal({ clockIn: v })
+                const s = store ?? effectiveStore
+                api.patch('/store/gps-settings', {
+                  gpsLatitude: s.gpsLatitude, gpsLongitude: s.gpsLongitude, gpsRadiusM: s.gpsRadiusM,
+                  gpsRequireClockIn: v, gpsRequireClockOut: globalClockOut,
+                }).catch(() => {})
+              }}
             />
             <div style={{ height: 1, background: 'var(--border)' }} />
             <ToggleRow
               label="Require GPS on Clock Out"
               description="Staff must be within store radius to clock out"
               active={globalClockOut}
-              onChange={v => setGlobal({ clockOut: v })}
+              onChange={v => {
+                setGlobal({ clockOut: v })
+                const s = store ?? effectiveStore
+                api.patch('/store/gps-settings', {
+                  gpsLatitude: s.gpsLatitude, gpsLongitude: s.gpsLongitude, gpsRadiusM: s.gpsRadiusM,
+                  gpsRequireClockIn: globalClockIn, gpsRequireClockOut: v,
+                }).catch(() => {})
+              }}
             />
           </div>
 
@@ -509,7 +686,7 @@ export default function StaffPage() {
                 staff.map(u => {
                   return (
                     <div key={u.id} className="card p-4 flex items-center gap-3">
-                      <AvatarUpload name={u.name} avatar={u.avatar} size={40} onSave={dataUrl => updateAvatar(u.id, dataUrl)} />
+                      <AvatarUpload name={u.name} avatar={u.avatar} size={40} onSave={dataUrl => handleAvatarSave(u.id, dataUrl)} />
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-semibold truncate" style={{ color: 'var(--text-1)' }}>{u.name}</p>
                         <p className="text-xs mt-0.5" style={{ color: 'var(--text-3)' }}>{u.phone}</p>
@@ -603,7 +780,7 @@ export default function StaffPage() {
 
                   {isIn && (
                     <button
-                      onClick={() => forceClockOut(u.id)}
+                      onClick={() => handleForceClockOut(u.id)}
                       className="flex-shrink-0 text-xs font-semibold px-3 py-1.5 rounded-lg"
                       style={{ color: 'var(--danger)', border: '1px solid #FECDD3', background: 'var(--danger-bg)' }}
                     >
@@ -627,12 +804,7 @@ export default function StaffPage() {
       <Modal open={showAdd} onClose={() => setShowAdd(false)} title="Add Staff Member">
         <UserForm
           withPin
-          onSubmit={(name, phone, _email, _password, pin) => {
-            const newId = Math.max(...users.map(u => u.id)) + 1
-            addUser({ name, phone, role: 'staff' })
-            if (pin) setPassword(newId, pin)
-            setShowAdd(false)
-          }}
+          onSubmit={handleAddStaff}
           onCancel={() => setShowAdd(false)}
           submitLabel="Add Staff"
         />
@@ -644,11 +816,7 @@ export default function StaffPage() {
           <UserForm
             withPin
             initial={{ name: editTarget.name, phone: editTarget.phone }}
-            onSubmit={(name, phone, _email, _password, pin) => {
-              updateUser(editTarget.id, { name, phone })
-              if (pin) setPassword(editTarget.id, pin)
-              setEditTarget(null)
-            }}
+            onSubmit={(name, phone, _email, _password, pin) => handleUpdateStaff(editTarget.id, name, phone, pin)}
             onCancel={() => setEditTarget(null)}
             submitLabel="Save Changes"
           />
@@ -667,7 +835,7 @@ export default function StaffPage() {
               <button
                 className="btn flex-1 text-white"
                 style={{ background: 'var(--danger)' }}
-                onClick={() => { deleteUser(deleteTarget.id); removePassword(deleteTarget.id); setDeleteTarget(null) }}
+                onClick={() => handleDeleteUser(deleteTarget.id)}
               >
                 Remove
               </button>

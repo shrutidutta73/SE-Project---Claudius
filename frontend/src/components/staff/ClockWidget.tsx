@@ -20,15 +20,18 @@ export default function ClockWidget({ user, store, clockedIn, gpsPolicy, onClock
     return () => clearInterval(id)
   }, [])
 
+  const gpsConfigured = store.gpsLatitude !== 0 || store.gpsLongitude !== 0
+
   useEffect(() => {
+    if (!gpsConfigured) { setDistanceM(null); return }
     if (!navigator.geolocation) { setDistanceM(0); return }
     navigator.geolocation.getCurrentPosition(
       pos => setDistanceM(Math.round(haversineDistanceM(pos.coords.latitude, pos.coords.longitude, store.gpsLatitude, store.gpsLongitude))),
       () => setDistanceM(0),
     )
-  }, [store.gpsLatitude, store.gpsLongitude])
+  }, [store.gpsLatitude, store.gpsLongitude, gpsConfigured])
 
-  const inRange = distanceM !== null && distanceM <= store.gpsRadiusM
+  const inRange = !gpsConfigured || (distanceM !== null && distanceM <= store.gpsRadiusM)
 
   // GPS enforcement check for the next action
   const nextAction = clockedIn ? 'out' : 'in'
@@ -86,20 +89,20 @@ export default function ClockWidget({ user, store, clockedIn, gpsPolicy, onClock
           <p className="text-lg font-bold tracking-tight" style={{ color: 'var(--dark)' }}>{user.name}</p>
           <p className="text-xs font-semibold uppercase tracking-widest" style={{ color: 'var(--text-4)' }}>{user.role}</p>
 
-          {/* Location pill */}
-          {distanceM === null && (
+          {/* Location pill — only shown when store GPS is configured */}
+          {gpsConfigured && distanceM === null && (
             <div className="flex items-center gap-1.5 px-3 py-1 rounded-full" style={{ background: 'var(--canvas)', border: '1px solid var(--border)' }}>
               <div style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--border-strong)' }} />
               <span className="text-xs font-medium" style={{ color: 'var(--text-4)' }}>Checking location…</span>
             </div>
           )}
-          {distanceM !== null && inRange && (
+          {gpsConfigured && distanceM !== null && inRange && (
             <div className="flex items-center gap-1.5 px-3 py-1 rounded-full" style={{ background: 'var(--success-bg)', border: '1px solid var(--success-border)' }}>
               <div style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--success)' }} />
               <span className="text-xs font-semibold" style={{ color: 'var(--success)' }}>Within range</span>
             </div>
           )}
-          {distanceM !== null && !inRange && (
+          {gpsConfigured && distanceM !== null && !inRange && (
             <div className="flex items-center gap-1.5 px-3 py-1 rounded-full" style={{ background: 'var(--canvas)', border: '1px solid var(--border)' }}>
               <div style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--border-strong)' }} />
               <span className="text-xs font-medium" style={{ color: 'var(--text-3)' }}>{distanceM}m from store</span>
