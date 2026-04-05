@@ -2,7 +2,8 @@ import { useLocation, useNavigate } from 'react-router-dom'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { getInitials } from '../lib/utils'
 import { useAuthStore, ROLE_ROUTES, ROLE_DEFAULT, type Role } from '../store/roleStore'
-import { useShopStore } from '../store/shopStore'
+import { api } from '../lib/api'
+import type { Store } from '../types'
 
 function IcLogout()   { return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg> }
 function IcSettings() { return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg> }
@@ -35,8 +36,13 @@ export default function AppLayout({ children }: Props) {
   const navigate     = useNavigate()
   const { currentUser, logout } = useAuthStore()
   const role = (currentUser?.role ?? 'staff') as Role
-  const shops = useShopStore(s => s.shops)
-  const currentStore = shops.find(s => s.id === currentUser?.storeId)
+  const [currentStore, setCurrentStore] = useState<Store | null>(null)
+
+  useEffect(() => {
+    if (currentUser) {
+      api.get<Store>('/store').then(setCurrentStore).catch(() => {})
+    }
+  }, [currentUser?.storeId])
 
   const navItems = (ROLE_NAV_ORDER[role] ?? [])
     .map(p => ALL_NAV.find(n => n.path === p))

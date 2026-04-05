@@ -1,8 +1,6 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useShopStore } from '../store/shopStore'
-import { useUsersStore } from '../store/usersStore'
-import { useCredStore } from '../store/credentialsStore'
+import { api } from '../lib/api'
 import LogoCropModal from '../components/ui/LogoCropModal'
 
 // ── Right decorative panel ──────────────────────────────────────────────────
@@ -42,9 +40,6 @@ function RightPanel() {
 // ── Main page ───────────────────────────────────────────────────────────────
 export default function RegisterPage() {
   const navigate    = useNavigate()
-  const { shops, addShop } = useShopStore()
-  const { users, addUser } = useUsersStore()
-  const { setPassword: storePassword } = useCredStore()
 
   const [shopName,   setShopName]   = useState('')
   const [address,    setAddress]    = useState('')
@@ -76,23 +71,29 @@ export default function RegisterPage() {
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return 'Enter a valid email address.'
     if (!/^\d{10}$/.test(phone)) return 'Enter a valid 10-digit phone number.'
     if (password.length < 6) return 'Password must be at least 6 characters.'
-    if (shops.some(s => s.name.toLowerCase() === shopName.trim().toLowerCase())) return 'A store with this name already exists.'
     return null
   }
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     const error = validate()
     if (error) { setErr(error); return }
     setLoading(true)
-    setTimeout(() => {
-      const newShopId = Math.max(...shops.map(s => s.id)) + 1
-      const newUserId = Math.max(...users.map(u => u.id)) + 1
-      addShop({ id: newShopId, name: shopName.trim(), address: address.trim(), ownerId: newUserId, logo })
-      addUser({ name: ownerName.trim(), phone: phone.trim(), email: email.trim(), role: 'owner', storeId: newShopId })
-      storePassword(newUserId, password)
+    try {
+      await api.post('/auth/register', {
+        shopName: shopName.trim(),
+        address: address.trim(),
+        logo,
+        ownerName: ownerName.trim(),
+        email: email.trim(),
+        phone: phone.trim(),
+        password,
+      }, false)  // false = no auth header needed
       navigate('/login', { state: { registered: true } })
-    }, 400)
+    } catch (err: unknown) {
+      setErr(err instanceof Error ? err.message : 'Registration failed.')
+      setLoading(false)
+    }
   }
 
   return (

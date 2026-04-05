@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import PageHeader from '../components/ui/PageHeader'
 import StatCard from '../components/ui/StatCard'
 import Button from '../components/ui/Button'
@@ -6,11 +6,20 @@ import Badge from '../components/ui/Badge'
 import InsightsCard from '../components/dashboard/InsightsCard'
 import BandChart from '../components/dashboard/BandChart'
 import RevenueChart from '../components/dashboard/RevenueChart'
-import { MOCK_DAILY_SUMMARY } from '../lib/mock'
+import { api } from '../lib/api'
 import { formatCurrencyFull, formatCurrency } from '../lib/utils'
 import { useAuthStore, type Role } from '../store/roleStore'
+import type { DailySalesSummary } from '../types'
 
 type Range = 'weekly' | 'monthly'
+
+type Summary = {
+  totalRevenue: number
+  unitsSold: number
+  topBand: { priceBandId: number; categoryName: string; bandPrice: number; revenue: number } | null
+  agingBatchCount: number
+  activeVendors: number
+}
 
 const IcRevenue = <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
 const IcUnits   = <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
@@ -20,7 +29,22 @@ const IcVendor  = <svg width="16" height="16" viewBox="0 0 24 24" fill="none" st
 export default function DashboardPage() {
   const role = (useAuthStore(s => s.currentUser)?.role ?? 'staff') as Role
   const [range, setRange] = useState<Range>('weekly')
-  const data = MOCK_DAILY_SUMMARY
+  const [data, setData] = useState<DailySalesSummary[]>([])
+  const [loading, setLoading] = useState(true)
+  const [summary, setSummary] = useState<Summary | null>(null)
+
+  useEffect(() => {
+    api.get<DailySalesSummary[]>(`/dashboard/daily-summary?range=${range}`)
+      .then(setData)
+      .catch(console.error)
+      .finally(() => setLoading(false))
+  }, [range])
+
+  useEffect(() => {
+    api.get<Summary>('/dashboard/summary')
+      .then(setSummary)
+      .catch(console.error)
+  }, [])
 
   const stats = useMemo(() => {
     const totalRevenue = data.reduce((s, d) => s + d.totalRevenue, 0)
@@ -35,6 +59,14 @@ export default function DashboardPage() {
     const bandsArr = Object.values(bandRevenue).sort((a, b) => b.revenue - a.revenue)
     return { totalRevenue, unitsSold, topBand: bandsArr[0], bandsArr }
   }, [data])
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-48" style={{ color: 'var(--text-3)' }}>
+        Loading...
+      </div>
+    )
+  }
 
   // ── OWNER VIEW: big numbers, no charts, no date range ───────────
   if (role === 'owner') {
@@ -123,11 +155,11 @@ export default function DashboardPage() {
           subtext={stats.topBand ? formatCurrency(stats.topBand.revenue) : undefined}
           color="var(--danger)"
         />
-        <StatCard icon={IcVendor} label="Active Vendors" value={3} color="var(--primary)" />
+        <StatCard icon={IcVendor} label="Active Vendors" value={summary?.activeVendors ?? 3} color="var(--primary)" />
       </div>
 
       <div className="mb-5">
-        <InsightsCard summaries={data} />
+        <InsightsCard summaries={data} agingCount={summary?.agingBatchCount ?? 0} />
       </div>
 
       {/* Mobile: table list */}
