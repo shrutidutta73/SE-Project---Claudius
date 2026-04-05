@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import PageHeader from '../components/ui/PageHeader'
 import Button from '../components/ui/Button'
 import Badge from '../components/ui/Badge'
@@ -6,8 +6,9 @@ import Modal from '../components/ui/Modal'
 import Input from '../components/ui/Input'
 import VendorCard from '../components/procurement/VendorCard'
 import OrderBuilder from '../components/procurement/OrderBuilder'
-import { MOCK_VENDORS, MOCK_REORDERS, MOCK_SUGGEST_ORDERS } from '../lib/mock'
+import { api } from '../lib/api'
 import type { Reorder, ReorderStatus, VendorWithDues } from '../types'
+import type { SuggestOrderItem } from '../types'
 import { formatDateTime } from '../lib/utils'
 
 const STATUS_BADGE: Record<ReorderStatus, { color: 'sand' | 'amber' | 'sage' | 'forest'; label: string }> = {
@@ -18,9 +19,13 @@ const STATUS_BADGE: Record<ReorderStatus, { color: 'sand' | 'amber' | 'sage' | '
 }
 
 export default function ProcurementPage() {
+  const [vendors, setVendors] = useState<VendorWithDues[]>([])
+  const [reorders, setReorders] = useState<Reorder[]>([])
+  const [loading, setLoading] = useState(true)
+
   const [selectedVendorId, setSelectedVendorId] = useState<number | null>(null)
   const [showOrderBuilder, setShowOrderBuilder] = useState(false)
-  const [reorders, setReorders] = useState<Reorder[]>(MOCK_REORDERS)
+  const [suggestions, setSuggestions] = useState<SuggestOrderItem[]>([])
 
   // Add vendor modal
   const [showAddVendor, setShowAddVendor] = useState(false)
@@ -28,17 +33,31 @@ export default function ProcurementPage() {
   const [addVendorPhone, setAddVendorPhone] = useState('')
   const [addVendorCity, setAddVendorCity] = useState('')
 
+  useEffect(() => {
+    Promise.all([
+      api.get<VendorWithDues[]>('/vendors'),
+      api.get<Reorder[]>('/reorders'),
+    ]).then(([v, r]) => {
+      setVendors(v)
+      setReorders(r)
+    }).catch(console.error)
+      .finally(() => setLoading(false))
+  }, [])
+
   const selectedVendor = selectedVendorId !== null
-    ? MOCK_VENDORS.find((v) => v.id === selectedVendorId) ?? null
+    ? vendors.find((v) => v.id === selectedVendorId) ?? null
     : null
 
-  const suggestions = selectedVendorId !== null ? (MOCK_SUGGEST_ORDERS[selectedVendorId] ?? []) : []
   const existingReorder = selectedVendorId !== null
     ? reorders.find((r) => r.vendorId === selectedVendorId && r.status !== 'fulfilled') ?? null
     : null
 
-  const handleOrder = (vendorId: number) => {
+  async function handleOrder(vendorId: number) {
     setSelectedVendorId(vendorId)
+    try {
+      const suggs = await api.get<SuggestOrderItem[]>(`/vendors/${vendorId}/suggest-order`)
+      setSuggestions(suggs)
+    } catch { setSuggestions([]) }
     setShowOrderBuilder(true)
   }
 
@@ -47,49 +66,46 @@ export default function ProcurementPage() {
     window.open(`https://wa.me/${phone}`, '_blank')
   }
 
-  const handleSend = (items: { priceBandId: number; finalQty: number }[]) => {
+  async function handleSend(items: { priceBandId: number; finalQty: number }[]) {
     if (!selectedVendorId || !selectedVendor) return
-    setReorders((prev) => {
-      const existing = prev.find((r) => r.vendorId === selectedVendorId && r.status === 'draft')
-      if (existing) {
-        return prev.map((r) =>
-          r.id === existing.id ? { ...r, status: 'sent' as ReorderStatus, sentAt: new Date().toISOString() } : r,
-        )
-      }
-      const newReorder: Reorder = {
-        id: prev.length + 1,
-        storeId: 1,
-        vendorId: selectedVendorId,
-        vendorName: selectedVendor.name,
-        createdBy: 2,
-        status: 'sent',
-        messageText: null,
-        createdAt: new Date().toISOString(),
-        sentAt: new Date().toISOString(),
-        items: items.map((it, idx) => {
-          const s = suggestions.find((sg) => sg.priceBandId === it.priceBandId)!
+    try {
+      const reorderItems = items
+        .filter(i => i.finalQty > 0)
+        .map(i => {
+          const s = suggestions.find(sg => sg.priceBandId === i.priceBandId)!
           return {
-            id: idx + 1,
-            reorderId: prev.length + 1,
-            priceBandId: it.priceBandId,
+            priceBandId: i.priceBandId,
             categoryName: s.categoryName,
             bandPrice: s.bandPrice,
             suggestedQty: s.suggestedQty,
-            finalQty: it.finalQty,
+            finalQty: i.finalQty,
           }
-        }),
-      }
-      return [...prev, newReorder]
-    })
+        })
+      const newReorder = await api.post<Reorder>('/reorders', {
+        vendorId: selectedVendorId,
+        items: reorderItems,
+      })
+      setReorders(prev => {
+        const idx = prev.findIndex(r => r.vendorId === selectedVendorId && r.status !== 'fulfilled')
+        if (idx >= 0) return prev.map((r, i) => i === idx ? newReorder : r)
+        return [...prev, newReorder]
+      })
+    } catch (err) { console.error(err) }
     setShowOrderBuilder(false)
   }
 
-  const handleAddVendor = (e: React.FormEvent) => {
+  async function handleAddVendor(e: React.FormEvent) {
     e.preventDefault()
+    try {
+      const newVendor = await api.post<VendorWithDues>('/vendors', {
+        name: addVendorName.trim(),
+        phone: addVendorPhone.trim() || undefined,
+        city: addVendorCity.trim() || undefined,
+      })
+      setVendors(prev => [...prev, newVendor])
+    } catch (err) { console.error(err) }
     setShowAddVendor(false)
-    setAddVendorName('')
-    setAddVendorPhone('')
-    setAddVendorCity('')
+    setAddVendorName(''); setAddVendorPhone(''); setAddVendorCity('')
   }
 
   return (
@@ -106,7 +122,9 @@ export default function ProcurementPage() {
 
       {/* Vendor grid */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 stagger-children mb-8">
-        {MOCK_VENDORS.map((vendor) => (
+        {loading ? (
+          <p className="text-sm text-[var(--text-3)]">Loading vendors...</p>
+        ) : vendors.map((vendor) => (
           <VendorCard
             key={vendor.id}
             vendor={vendor}

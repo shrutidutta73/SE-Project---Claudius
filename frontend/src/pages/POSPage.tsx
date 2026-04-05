@@ -1,6 +1,6 @@
-import { useState } from 'react'
-import type { PriceBandWithStock } from '../types'
-import { MOCK_PRICE_BANDS_WITH_STOCK, MOCK_CATEGORIES } from '../lib/mock'
+import { useState, useEffect } from 'react'
+import type { PriceBandWithStock, Category, PaymentMethod } from '../types'
+import { api } from '../lib/api'
 import { useCartStore } from '../store/cartStore'
 import { useAuthStore, type Role } from '../store/roleStore'
 import { useNavigate } from 'react-router-dom'
@@ -9,16 +9,29 @@ import PriceGrid from '../components/pos/PriceGrid'
 import Keypad from '../components/pos/Keypad'
 import CartPanel from '../components/pos/CartPanel'
 import CartDrawer from '../components/pos/CartDrawer'
-import type { PaymentMethod } from '../types'
 
 export default function POSPage() {
   const navigate   = useNavigate()
   const role       = (useAuthStore(s => s.currentUser)?.role ?? 'staff') as Role
   const clockedIn  = useAuthStore(s => s.clockedIn)
-  const [activeCategory, setActiveCategory] = useState<number>(MOCK_CATEGORIES[0].id)
+  const [activeCategory, setActiveCategory] = useState<number>(0)
   const [customMode, setCustomMode] = useState(false)
   const [keyDisplay, setKeyDisplay] = useState('')
   const [successMethod, setSuccessMethod] = useState<PaymentMethod | null>(null)
+  const [bands, setBands] = useState<PriceBandWithStock[]>([])
+  const [categories, setCategories] = useState<Category[]>([])
+  const [dataLoading, setDataLoading] = useState(true)
+
+  useEffect(() => {
+    Promise.all([
+      api.get<PriceBandWithStock[]>('/price-bands/with-stock'),
+      api.get<{ id: number; storeId: number; name: string; createdAt: string }[]>('/categories'),
+    ]).then(([bandsData, catsData]) => {
+      setBands(bandsData)
+      setCategories(catsData)
+      if (catsData.length > 0) setActiveCategory(catsData[0].id)
+    }).catch(console.error).finally(() => setDataLoading(false))
+  }, [])
 
   const privacyMode     = useCartStore(s => s.privacyMode)
   const togglePrivacy   = useCartStore(s => s.togglePrivacyMode)
@@ -30,7 +43,7 @@ export default function POSPage() {
   const items           = useCartStore(s => s.items)
   const total           = useCartStore(s => s.total)
 
-  const filteredBands = MOCK_PRICE_BANDS_WITH_STOCK.filter(b => b.categoryId === activeCategory)
+  const filteredBands = bands.filter(b => b.categoryId === activeCategory)
   const itemCount = items.reduce((sum, i) => sum + i.quantity, 0)
   const totalAmount = total()
 
@@ -47,7 +60,7 @@ export default function POSPage() {
   function handleKeypadAdd() {
     const price = parseFloat(keyDisplay)
     if (!price || isNaN(price) || price <= 0) return
-    const catName = MOCK_CATEGORIES.find(c => c.id === activeCategory)?.name ?? 'Custom'
+    const catName = categories.find(c => c.id === activeCategory)?.name ?? 'Custom'
     addItem({ priceBandId: 0, categoryName: `Custom · ${catName}`, price })
     setKeyDisplay('')
     setCustomMode(false)
@@ -57,8 +70,8 @@ export default function POSPage() {
     addItem({ priceBandId: band.id, categoryName: band.categoryName, price: band.price })
   }
 
-  function handleCheckout(method: PaymentMethod) {
-    checkout(method)
+  async function handleCheckout(method: PaymentMethod) {
+    await checkout(method)
     setSuccessMethod(method)
     setTimeout(() => setSuccessMethod(null), 2000)
   }
@@ -82,6 +95,14 @@ export default function POSPage() {
         <button onClick={() => navigate('/staff')} className="btn btn-primary px-6 py-2.5 text-sm font-semibold">
           Go to Clock In
         </button>
+      </div>
+    )
+  }
+
+  if (dataLoading) {
+    return (
+      <div className="flex items-center justify-center py-20">
+        <p className="text-sm" style={{ color: 'var(--text-3)' }}>Loading…</p>
       </div>
     )
   }
@@ -118,7 +139,7 @@ export default function POSPage() {
         {/* Left — product selection */}
         <div className="flex flex-col gap-3 min-w-0">
           <CategoryTabs
-            bands={MOCK_PRICE_BANDS_WITH_STOCK}
+            bands={bands}
             activeCategory={activeCategory}
             onChange={id => { setActiveCategory(id); setCustomMode(false); setKeyDisplay('') }}
           />

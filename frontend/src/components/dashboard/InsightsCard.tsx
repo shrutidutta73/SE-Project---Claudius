@@ -1,12 +1,12 @@
 import type { DailySalesSummary } from '../../types'
-import { MOCK_BATCHES } from '../../lib/mock'
 import { formatCurrencyFull } from '../../lib/utils'
 
 interface Props {
   summaries: DailySalesSummary[]
+  agingCount?: number
 }
 
-export default function InsightsCard({ summaries }: Props) {
+export default function InsightsCard({ summaries, agingCount }: Props) {
   const revenueByBand: Record<number, { categoryName: string; bandPrice: number; totalRevenue: number }> = {}
   for (const s of summaries) {
     if (!revenueByBand[s.priceBandId]) {
@@ -17,10 +17,10 @@ export default function InsightsCard({ summaries }: Props) {
 
   const bands = Object.values(revenueByBand)
   const topBand = bands.sort((a, b) => b.totalRevenue - a.totalRevenue)[0]
-  const agingCount = MOCK_BATCHES.filter(b => b.ageInDays > 60).length
+  const aging = agingCount ?? 0
 
   const insightText = topBand
-    ? `The ₹${topBand.bandPrice} ${topBand.categoryName} band is your top mover with ${formatCurrencyFull(topBand.totalRevenue)}. ${agingCount} batch${agingCount !== 1 ? 'es' : ''} ${agingCount !== 1 ? 'are' : 'is'} aging over 60 days.`
+    ? `The ₹${topBand.bandPrice} ${topBand.categoryName} band is your top mover with ${formatCurrencyFull(topBand.totalRevenue)}. ${aging} batch${aging !== 1 ? 'es' : ''} ${aging !== 1 ? 'are' : 'is'} aging over 60 days.`
     : 'No sales data available for this period.'
 
   return (

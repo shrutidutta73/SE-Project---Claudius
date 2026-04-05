@@ -32,9 +32,7 @@ export const useGpsSettingsStore = create<GpsSettingsStore>((set, get) => ({
     policies: {
       ...state.policies,
       [userId]: {
-        requireOnClockIn:  state.globalClockIn,
-        requireOnClockOut: state.globalClockOut,
-        ...(state.policies[userId] ?? {}),
+        ...(state.policies[userId] ?? { requireOnClockIn: state.globalClockIn, requireOnClockOut: state.globalClockOut }),
         ...patch,
       },
     },

@@ -1,27 +1,35 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useAuthStore } from '../store/roleStore'
-import type { BillingMode, AuditLogEntry } from '../types'
-import { MOCK_STORE, MOCK_AUDIT_LOG } from '../lib/mock'
+import type { BillingMode, AuditLogEntry, Store, User } from '../types'
+import { api } from '../lib/api'
 import PageHeader from '../components/ui/PageHeader'
 import Button from '../components/ui/Button'
 import BillingModeToggle from '../components/retention/BillingModeToggle'
 import RetentionSlider from '../components/retention/RetentionSlider'
 import DangerZone from '../components/retention/DangerZone'
 import AuditLog from '../components/retention/AuditLog'
-import { useShopStore } from '../store/shopStore'
-import { useUsersStore } from '../store/usersStore'
-import { useCredStore } from '../store/credentialsStore'
 import LogoCropModal from '../components/ui/LogoCropModal'
 import AvatarUpload from '../components/ui/AvatarUpload'
 
 export default function SettingsPage() {
   const role        = useAuthStore(s => s.currentUser?.role)
   const currentUser = useAuthStore(s => s.currentUser)
-  const { shops, updateShop } = useShopStore()
-  const myShop = shops.find(s => s.id === currentUser?.storeId)
 
-  const { updateUser, updateAvatar } = useUsersStore()
-  const { setPassword: savePassword, verify } = useCredStore()
+  const [storeData, setStoreData] = useState<Store | null>(null)
+  const [auditLog, setAuditLog]   = useState<AuditLogEntry[]>([])
+
+  useEffect(() => {
+    api.get<Store>('/store').then(s => {
+      setStoreData(s)
+      setBillingMode(s.billingMode)
+      setRetentionDays(s.retentionDays ?? 14)
+      setShopName(s.name)
+      setShopAddress(s.address)
+      setShopLogo(s.logo ?? undefined)
+    }).catch(console.error)
+
+    api.get<AuditLogEntry[]>('/audit/log').then(setAuditLog).catch(console.error)
+  }, [])
 
   // Owner profile edit
   const [editingProfile, setEditingProfile] = useState(false)
@@ -37,17 +45,16 @@ export default function SettingsPage() {
   // Logo crop state
   const [rawLogoSrc,  setRawLogoSrc]  = useState<string | undefined>()
 
-  const [billingMode, setBillingMode] = useState<BillingMode>(MOCK_STORE.billingMode)
-  const [retentionDays, setRetentionDays] = useState<number>(MOCK_STORE.retentionDays ?? 14)
-  const [saved, setSaved] = useState(false)
-  const [toast, setToast] = useState<string | null>(null)
-  const [auditLog, setAuditLog] = useState<AuditLogEntry[]>(MOCK_AUDIT_LOG)
+  const [billingMode, setBillingMode]       = useState<BillingMode>('ephemeral')
+  const [retentionDays, setRetentionDays]   = useState<number>(14)
+  const [saved, setSaved]                   = useState(false)
+  const [toast, setToast]                   = useState<string | null>(null)
 
   // Shop details edit state
   const [editingShop, setEditingShop] = useState(false)
-  const [shopName,    setShopName]    = useState(myShop?.name ?? '')
-  const [shopAddress, setShopAddress] = useState(myShop?.address ?? '')
-  const [shopLogo,    setShopLogo]    = useState<string | undefined>(myShop?.logo)
+  const [shopName,    setShopName]    = useState('')
+  const [shopAddress, setShopAddress] = useState('')
+  const [shopLogo,    setShopLogo]    = useState<string | undefined>()
   const [shopErr,     setShopErr]     = useState('')
 
   function handleLogoFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
@@ -67,33 +74,37 @@ export default function SettingsPage() {
     reader.readAsDataURL(file)
   }
 
-  function handleShopSave() {
+  async function handleShopSave() {
     if (!shopName.trim())    { setShopErr('Store name is required.'); return }
     if (!shopAddress.trim()) { setShopErr('Address is required.'); return }
-    if (myShop) updateShop(myShop.id, { name: shopName.trim(), address: shopAddress.trim(), logo: shopLogo })
-    setEditingShop(false)
-    setShopErr('')
-    showToast('Store details updated.')
+    try {
+      const updated = await api.patch<Store>('/store', { name: shopName.trim(), address: shopAddress.trim(), logo: shopLogo })
+      setStoreData(updated)
+      setEditingShop(false)
+      setShopErr('')
+      showToast('Store details updated.')
+    } catch (err) { setShopErr(err instanceof Error ? err.message : 'Failed to save.') }
   }
 
-  function handleProfileSave() {
+  async function handleProfileSave() {
     if (!profName.trim())            { setProfErr('Name is required.'); return }
     if (!/^\d{10}$/.test(profPhone)) { setProfErr('Enter a valid 10-digit phone number.'); return }
     if (profEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(profEmail)) { setProfErr('Enter a valid email address.'); return }
     if (profPwdNew) {
       if (!profPwdOld) { setProfErr('Enter your current password to set a new one.'); return }
-      if (currentUser && !verify(currentUser.id, profPwdOld)) { setProfErr('Current password is incorrect.'); return }
       if (profPwdNew.length < 6) { setProfErr('New password must be at least 6 characters.'); return }
     }
-    if (currentUser) {
-      updateUser(currentUser.id, { name: profName.trim(), phone: profPhone.trim(), email: profEmail.trim() || undefined })
-      if (profPwdNew) savePassword(currentUser.id, profPwdNew)
-    }
-    setEditingProfile(false)
-    setProfErr('')
-    setProfPwdOld('')
-    setProfPwdNew('')
-    showToast('Profile updated.')
+    try {
+      await api.patch<User>(`/users/${currentUser!.id}`, { name: profName.trim(), phone: profPhone.trim(), email: profEmail.trim() || undefined })
+      if (profPwdNew) {
+        await api.patch(`/users/${currentUser!.id}/password`, { currentPassword: profPwdOld, newPassword: profPwdNew })
+      }
+      setEditingProfile(false)
+      setProfErr('')
+      setProfPwdOld('')
+      setProfPwdNew('')
+      showToast('Profile updated.')
+    } catch (err) { setProfErr(err instanceof Error ? err.message : 'Failed to save.') }
   }
 
   function showToast(msg: string) {
@@ -101,29 +112,31 @@ export default function SettingsPage() {
     setTimeout(() => setToast(null), 3500)
   }
 
-  function handleSave() {
-    setSaved(true)
-    showToast('Settings saved successfully.')
-    setTimeout(() => setSaved(false), 2000)
+  async function handleSave() {
+    try {
+      await api.patch('/store/billing-mode', { billingMode })
+      if (billingMode === 'ephemeral') {
+        await api.patch('/store/retention', { retentionDays })
+      }
+      setSaved(true)
+      showToast('Settings saved successfully.')
+      setTimeout(() => setSaved(false), 2000)
+    } catch (err) { showToast('Failed to save settings.') }
   }
 
-  function handleWipe(password: string) {
-    // Mock: just add an entry + show success
-    const newEntry: AuditLogEntry = {
-      id: auditLog.length + 1,
-      timestamp: new Date().toISOString(),
-      type: 'manual',
-      recordsPruned: Math.floor(Math.random() * 5000) + 1000,
-    }
-    setAuditLog(prev => [newEntry, ...prev])
-    showToast(`Data wipe initiated with password "${password.replace(/./g, '•')}". All non-GST records queued for deletion.`)
+  async function handleWipe(password: string) {
+    try {
+      const entry = await api.post<AuditLogEntry>('/audit/wipe', { password })
+      setAuditLog(prev => [entry, ...prev])
+      showToast(`Data wipe complete. ${entry.recordsPruned} records pruned.`)
+    } catch (err) { showToast(err instanceof Error ? err.message : 'Wipe failed.') }
   }
 
   return (
     <div className="animate-fade-in flex flex-col gap-8">
 
       {/* ── Shop Details (owner only) ─────────────────────────── */}
-      {role === 'owner' && myShop && (
+      {role === 'owner' && storeData && (
         <section className="flex flex-col gap-3">
           <div className="flex items-center justify-between">
             <div>
@@ -132,7 +145,7 @@ export default function SettingsPage() {
             </div>
             {!editingShop && (
               <button
-                onClick={() => { setShopName(myShop.name); setShopAddress(myShop.address); setEditingShop(true) }}
+                onClick={() => { setShopName(storeData.name); setShopAddress(storeData.address); setEditingShop(true) }}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold"
                 style={{ border: '1px solid var(--border)', color: 'var(--text-2)' }}
               >
@@ -190,11 +203,11 @@ export default function SettingsPage() {
                 <div className="flex items-center gap-3">
                   {/* Logo — click to replace directly */}
                   <label className="cursor-pointer relative group flex-shrink-0" title="Click to change logo">
-                    {myShop.logo ? (
-                      <img src={myShop.logo} alt={myShop.name} className="w-10 h-10 rounded-xl object-cover" />
+                    {storeData.logo ? (
+                      <img src={storeData.logo} alt={storeData.name} className="w-10 h-10 rounded-xl object-cover" />
                     ) : (
                       <div className="w-10 h-10 rounded-xl flex items-center justify-center text-white font-black text-base" style={{ background: 'var(--primary)' }}>
-                        {myShop.name[0].toUpperCase()}
+                        {storeData.name[0].toUpperCase()}
                       </div>
                     )}
                     <div className="absolute inset-0 rounded-xl flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity" style={{ background: 'rgba(0,0,0,0.45)' }}>
@@ -203,7 +216,7 @@ export default function SettingsPage() {
                     <input type="file" accept="image/*" className="sr-only" onChange={handleLogoFileSelect} />
                   </label>
                   <div>
-                    <p className="font-bold text-sm" style={{ color: 'var(--text-1)' }}>{myShop.name}</p>
+                    <p className="font-bold text-sm" style={{ color: 'var(--text-1)' }}>{storeData.name}</p>
                     <p className="text-xs mt-0.5" style={{ color: 'var(--text-3)' }}>Registered store</p>
                   </div>
                 </div>
@@ -212,14 +225,14 @@ export default function SettingsPage() {
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mt-0.5 flex-shrink-0" style={{ color: 'var(--text-4)' }}>
                       <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/>
                     </svg>
-                    <p className="text-sm" style={{ color: 'var(--text-2)' }}>{myShop.address}</p>
+                    <p className="text-sm" style={{ color: 'var(--text-2)' }}>{storeData.address}</p>
                   </div>
                   <div className="flex items-center gap-2">
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: 'var(--text-4)' }}>
                       <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>
                     </svg>
                     <p className="text-xs" style={{ color: 'var(--text-3)' }}>
-                      Registered {new Date(myShop.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })}
+                      Registered {new Date(storeData.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })}
                     </p>
                   </div>
                 </div>
@@ -302,7 +315,9 @@ export default function SettingsPage() {
                     name={currentUser.name}
                     avatar={currentUser.avatar}
                     size={40}
-                    onSave={dataUrl => updateAvatar(currentUser.id, dataUrl)}
+                    onSave={async (dataUrl) => {
+                      await api.patch(`/users/${currentUser.id}/avatar`, { avatar: dataUrl })
+                    }}
                   />
                   <div>
                     <p className="font-bold text-sm" style={{ color: 'var(--text-1)' }}>{currentUser.name}</p>
@@ -394,9 +409,12 @@ export default function SettingsPage() {
       {rawLogoSrc && (
         <LogoCropModal
           src={rawLogoSrc}
-          onConfirm={cropped => {
+          onConfirm={async (cropped) => {
             setShopLogo(cropped)
-            if (myShop) updateShop(myShop.id, { name: myShop.name, address: myShop.address, logo: cropped })
+            try {
+              const updated = await api.patch<Store>('/store', { name: storeData?.name ?? shopName, address: storeData?.address ?? shopAddress, logo: cropped })
+              setStoreData(updated)
+            } catch (err) { console.error(err) }
             setRawLogoSrc(undefined)
             showToast('Logo updated.')
           }}
