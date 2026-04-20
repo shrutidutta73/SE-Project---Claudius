@@ -51,13 +51,7 @@ export async function createSale(
     }
 
     // ── Step 2: FIFO batch deduction for non-custom items ─────────────────────
-    // Map: priceBandId -> usedBatches (only for items that require deduction)
-    // For items with the same priceBandId we process them together
-    const itemBatchMap = new Map<
-      number,
-      Map<number, Array<{ batchId: number; qty: number }>>
-    >()
-    // itemBatchMap[itemIndex] -> usedBatches
+    // perItemBatches[i] holds the batches (and qtys) consumed for items[i].
     const perItemBatches: Array<Array<{ batchId: number; qty: number }>> = []
 
     for (let i = 0; i < items.length; i++) {
