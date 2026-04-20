@@ -26,8 +26,12 @@ export function errorHandler(
   }
 
   const pgErr = err as PgError
+  // pg `detail` strings include the offending column/value (e.g.
+  // "Key (email)=(a@b.com) already exists") — log them server-side but don't
+  // echo them to the client, where they become an info-disclosure channel.
   if (pgErr?.code === '23505') {
-    res.status(409).json({ error: 'Duplicate entry', detail: pgErr.detail })
+    logger.warn({ detail: pgErr.detail, constraint: pgErr.constraint }, 'unique violation')
+    res.status(409).json({ error: 'Duplicate entry' })
     return
   }
   if (pgErr?.code === '23503') {
@@ -35,7 +39,8 @@ export function errorHandler(
     return
   }
   if (pgErr?.code === '23514') {
-    res.status(400).json({ error: 'Value violates check constraint', detail: pgErr.detail })
+    logger.warn({ detail: pgErr.detail, constraint: pgErr.constraint }, 'check violation')
+    res.status(400).json({ error: 'Value violates check constraint' })
     return
   }
 
