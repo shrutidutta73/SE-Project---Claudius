@@ -106,7 +106,13 @@ export async function createSale(
     const { billing_mode: billingMode, retention_days: retentionDays } = storeResult.rows[0]
 
     // ── Step 4: Insert sale ───────────────────────────────────────────────────
-    const totalAmount = items.reduce((sum, item) => sum + item.subtotal, 0) - discountAmount
+    const cartSubtotal = items.reduce((sum, item) => sum + item.subtotal, 0)
+    // A discount larger than the cart would produce a negative total_amount
+    // on the sale row — block it at the service boundary.
+    if (discountAmount > cartSubtotal) {
+      throw new AppError('Discount exceeds cart subtotal', 400)
+    }
+    const totalAmount = cartSubtotal - discountAmount
     const isEphemeral = billingMode === 'ephemeral'
     const expiresAt = isEphemeral
       ? new Date(Date.now() + retentionDays * 24 * 60 * 60 * 1000)
