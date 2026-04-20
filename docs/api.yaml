@@ -55,6 +55,11 @@ paths:
     post:
       tags: [Auth]
       summary: Register a new store and owner account
+      description: >
+        **Story 1.1 — Store Creation.**
+        Creates a new store record together with an owner user account.
+        shopName must be unique across all stores; email must be unique across all users.
+        Returns a signed JWT and the owner user object on success.
       security: []
       requestBody:
         required: true
@@ -76,6 +81,14 @@ paths:
     post:
       tags: [Auth]
       summary: Login as owner/manager (email + password) or staff (phone + PIN)
+      description: >
+        **Stories 1.1, 1.2 — Store Access.**
+        Authenticates a user and returns a signed JWT.
+        If the identifier is an email address, the credential is compared against
+        the bcrypt password hash (owner/manager flow).
+        If the identifier is a 10-digit phone number, the credential is compared
+        against the bcrypt PIN hash (staff flow).
+        The response never exposes password_hash or pin_hash.
       security: []
       requestBody:
         required: true
@@ -101,6 +114,10 @@ paths:
     get:
       tags: [Store]
       summary: Get the authenticated user's store
+      description: >
+        **Story 1.1 — Store Setup.**
+        Returns the full store profile including GPS geofence coordinates,
+        billing mode, and data retention policy. Accessible to all authenticated roles.
       responses:
         '200':
           description: Store details
@@ -115,6 +132,10 @@ paths:
     patch:
       tags: [Store]
       summary: Update store name, address, or logo (owner only)
+      description: >
+        **Story 1.1 — Store Setup.**
+        Updates one or more of the store's display fields: name, address, or logo.
+        All fields are optional; only provided fields are updated. Owner role required.
       requestBody:
         required: true
         content:
@@ -139,6 +160,11 @@ paths:
     patch:
       tags: [Store]
       summary: Update billing mode (owner only)
+      description: >
+        **Story 3.2 — Data Retention.**
+        Switches between structured (permanent sales records) and ephemeral
+        (records auto-expire after retentionDays) billing modes.
+        Switching to structured clears the retentionDays setting. Owner role required.
       requestBody:
         required: true
         content:
@@ -163,6 +189,11 @@ paths:
     patch:
       tags: [Store]
       summary: Update data retention days for ephemeral mode (owner only)
+      description: >
+        **Story 3.2 — Data Retention.**
+        Sets the number of days after which ephemeral sales records are eligible
+        for deletion. Accepted values: 7, 14, 30, 90, or null (no auto-expiry).
+        Any other value is rejected with 400. Owner role required.
       requestBody:
         required: true
         content:
@@ -187,6 +218,13 @@ paths:
     patch:
       tags: [Store]
       summary: Update GPS geofencing settings (owner only)
+      description: >
+        **Stories 1.1, 7.1 — GPS Geofencing.**
+        Persists the store's GPS coordinates, geofence radius, and clock-in/out
+        enforcement flags to the database. The attendance service reads these flags
+        on every clock-in and clock-out request to enforce location boundaries.
+        This endpoint fixes BUG-01 from Sprint 1 (flags were previously lost on page reload).
+        Owner role required.
       requestBody:
         required: true
         content:
@@ -213,6 +251,10 @@ paths:
     get:
       tags: [Users]
       summary: List all active users in the store
+      description: >
+        **Story 1.2 — Staff Management.**
+        Returns all active (non-deleted) users belonging to the authenticated user's
+        store. Cross-store isolation is enforced: users from other stores are never returned.
       responses:
         '200':
           description: Array of users
@@ -227,6 +269,11 @@ paths:
     post:
       tags: [Users]
       summary: Add a new user to the store (owner or manager only)
+      description: >
+        **Story 1.2 — Staff Management.**
+        Creates a new staff or manager account in the store.
+        Staff accounts require a 4-digit PIN; manager and owner accounts require a password.
+        Phone number must be unique within the store.
       requestBody:
         required: true
         content:
@@ -246,11 +293,17 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
 
   /users/{id}:
     patch:
       tags: [Users]
       summary: Update user name, phone, or email (owner or manager only)
+      description: >
+        **Story 1.2 — Staff Management.**
+        Updates one or more profile fields for the specified user.
+        Returns 404 if the user does not belong to the authenticated store.
       parameters:
         - $ref: '#/components/parameters/IntId'
       requestBody:
@@ -277,6 +330,10 @@ paths:
     delete:
       tags: [Users]
       summary: Soft-delete (deactivate) a user (owner only)
+      description: >
+        **Story 1.2 — Staff Management.**
+        Sets the user's isActive flag to false. The user can no longer log in.
+        An owner cannot deactivate their own account (returns 403).
       parameters:
         - $ref: '#/components/parameters/IntId'
       responses:
@@ -299,6 +356,10 @@ paths:
     patch:
       tags: [Users]
       summary: Change a user's password (owner, manager, or self)
+      description: >
+        **Story 1.2 — Staff Management.**
+        Changes a user's password. Requires the current password for verification (401 if wrong).
+        New password must be at least 6 characters.
       parameters:
         - $ref: '#/components/parameters/IntId'
       requestBody:
@@ -327,6 +388,10 @@ paths:
     patch:
       tags: [Users]
       summary: Change a staff user's PIN (owner or manager only)
+      description: >
+        **Story 1.2 — Staff Management.**
+        Updates a staff member's 4-digit login PIN.
+        Returns 400 if applied to a manager or owner account (PIN is a staff-only credential).
       parameters:
         - $ref: '#/components/parameters/IntId'
       requestBody:
@@ -355,6 +420,10 @@ paths:
     patch:
       tags: [Users]
       summary: Update a user's avatar (self, owner, or manager)
+      description: >
+        **Story 1.2 — Staff Management.**
+        Stores a base64-encoded data URL as the user's avatar image.
+        A user can update their own avatar. Managers and owners can update any user's avatar.
       parameters:
         - $ref: '#/components/parameters/IntId'
       requestBody:
@@ -385,6 +454,9 @@ paths:
     get:
       tags: [Categories]
       summary: List all categories for the store
+      description: >
+        **Story 2.2 — Inventory Categorisation.**
+        Returns all product categories defined for the authenticated store.
       responses:
         '200':
           description: Array of categories
@@ -399,6 +471,10 @@ paths:
     post:
       tags: [Categories]
       summary: Create a new category (owner or manager only)
+      description: >
+        **Story 2.2 — Inventory Categorisation.**
+        Creates a new product category. Category name must be unique within the store.
+        Returns 409 if a duplicate name is submitted.
       requestBody:
         required: true
         content:
@@ -431,6 +507,9 @@ paths:
     get:
       tags: [PriceBands]
       summary: List active price bands for the store
+      description: >
+        **Stories 2.2, 3.1 — Price Band Management.**
+        Returns all active price bands (product SKUs) for the authenticated store.
       responses:
         '200':
           description: Array of price bands
@@ -445,6 +524,10 @@ paths:
     post:
       tags: [PriceBands]
       summary: Create a new price band (owner or manager only)
+      description: >
+        **Stories 2.2, 3.1 — Price Band Management.**
+        Creates a new price band linked to a category. Price must be a positive number.
+        categoryId must belong to the authenticated store.
       requestBody:
         required: true
         content:
@@ -471,6 +554,11 @@ paths:
     get:
       tags: [PriceBands]
       summary: List active price bands with aggregated current stock levels
+      description: >
+        **Story 3.1 — Point of Sale.**
+        Returns price bands with totalStock aggregated from active inventory batches.
+        Used by the POS page to determine which items are available and to disable
+        bands with zero remaining stock.
       responses:
         '200':
           description: Array of price bands with stock
@@ -489,6 +577,11 @@ paths:
     get:
       tags: [Inventory]
       summary: List inventory batches with optional filter
+      description: >
+        **Story 2.1 — Inventory Management.**
+        Returns inventory batches for the store. Optional filter values:
+        low_stock (quantity < 10), aging (added more than 60 days ago),
+        new_arrivals (added within the last 7 days), or all (default).
       parameters:
         - name: filter
           in: query
@@ -514,6 +607,11 @@ paths:
     post:
       tags: [Inventory]
       summary: Add a new inventory batch (owner or manager only)
+      description: >
+        **Story 2.1 — Inventory Management.**
+        Adds a new batch of stock for a price band. quantityAdded must be a positive integer.
+        priceBandId must belong to the authenticated store.
+        costPrice, vendorId, and notes are optional.
       requestBody:
         required: true
         content:
@@ -540,6 +638,11 @@ paths:
     patch:
       tags: [Inventory]
       summary: Update an inventory batch — close, adjust quantity, or mark defective (owner or manager only)
+      description: >
+        **Stories 2.1, 2.3 — Inventory Management.**
+        Applies one of three actions: adjust (set quantityRemaining to a new value),
+        close (set quantityRemaining to 0), or defective (append [DEFECTIVE] to notes
+        without changing quantity). Returns 404 if the batch does not belong to the store.
       parameters:
         - $ref: '#/components/parameters/IntId'
       requestBody:
@@ -568,6 +671,10 @@ paths:
     get:
       tags: [Inventory]
       summary: Get stock matrix grouped by category with price band columns
+      description: >
+        **Story 2.3 — Inventory Overview.**
+        Returns a category-by-price-band matrix showing current stock totals.
+        Used by the inventory overview page to give a quick summary of what is in stock.
       responses:
         '200':
           description: Array of matrix rows
@@ -586,6 +693,13 @@ paths:
     post:
       tags: [Sales]
       summary: Create a new sale with FIFO batch deduction
+      description: >
+        **Story 3.1 — Point of Sale.**
+        Creates a sale record and deducts stock from inventory using FIFO (oldest batch first).
+        Items with priceBandId: 0 are treated as custom items and skip stock deduction.
+        If customerPhone is provided, a customer record is created on first purchase
+        or updated on subsequent visits.
+        Returns 400 with the item name if stock is insufficient.
       requestBody:
         required: true
         content:
@@ -610,6 +724,10 @@ paths:
     get:
       tags: [Attendance]
       summary: Get today's staff roster with clock-in status (owner or manager only)
+      description: >
+        **Story 7.1 — Staff Attendance.**
+        Returns an array of all store users showing current clock-in status,
+        check-in time, and check-out time for today. Accessible to owner and manager only.
       responses:
         '200':
           description: Array of roster entries
@@ -628,6 +746,12 @@ paths:
     post:
       tags: [Attendance]
       summary: Clock in the authenticated user with GPS coordinates
+      description: >
+        **Story 7.1 — Staff Attendance.**
+        Records a clock-in for the authenticated user. If gpsRequireClockIn is true
+        for the store, the provided coordinates are checked against the store's geofence
+        using the haversine formula. Returns 400 if the user is already clocked in today
+        or if GPS enforcement fails.
       requestBody:
         required: true
         content:
@@ -650,6 +774,11 @@ paths:
     post:
       tags: [Attendance]
       summary: Clock out the authenticated user with GPS coordinates
+      description: >
+        **Story 7.1 — Staff Attendance.**
+        Records a clock-out for the authenticated user. If gpsRequireClockOut is true,
+        the coordinates are validated against the store geofence.
+        Returns 400 if no clock-in record exists for today or the user is already clocked out.
       requestBody:
         required: true
         content:
@@ -672,6 +801,10 @@ paths:
     patch:
       tags: [Attendance]
       summary: Force clock out a specific staff member (owner or manager only)
+      description: >
+        **Story 7.1 — Staff Attendance.**
+        Closes an open attendance record for a specific user, setting checkOutAt to now.
+        Used by managers at end of day to clean up any staff who forgot to clock out.
       parameters:
         - name: userId
           in: path
@@ -699,6 +832,11 @@ paths:
     get:
       tags: [Staff]
       summary: Get today's staff leaderboard ranked by revenue
+      description: >
+        **Story 7.2 — Staff Performance.**
+        Returns all active store users ranked by revenueToday descending.
+        salesCountToday defaults to 0 for users with no sales today.
+        Accessible to all authenticated roles.
       responses:
         '200':
           description: Array of leaderboard entries
@@ -717,6 +855,11 @@ paths:
     get:
       tags: [Dashboard]
       summary: Get weekly KPI summary (owner or manager only)
+      description: >
+        **Story 8.1 — Business Analytics.**
+        Returns KPI summary for the current week: total revenue, units sold,
+        top performing price band, count of aging batches, and active vendor count.
+        Owner and manager only.
       responses:
         '200':
           description: Weekly KPI summary
@@ -733,6 +876,11 @@ paths:
     get:
       tags: [Dashboard]
       summary: Get per-row daily sales data for weekly or monthly range (owner or manager only)
+      description: >
+        **Story 8.2 — Sales Charts.**
+        Returns daily sales rows broken down by price band for the specified range
+        (weekly = last 7 days, monthly = last 30 days). Used to populate the revenue
+        and band performance charts on the dashboard. Invalid range values return 400.
       parameters:
         - name: range
           in: query
@@ -764,6 +912,10 @@ paths:
     get:
       tags: [Vendors]
       summary: List all active vendors for the store
+      description: >
+        **Story 5.1 — Vendor Management.**
+        Returns all active (non-deleted) vendors for the store, including their
+        supplied price bands and outstanding dues calculated from open reorders.
       responses:
         '200':
           description: Array of vendors with dues and supplied bands
@@ -778,6 +930,10 @@ paths:
     post:
       tags: [Vendors]
       summary: Create a new vendor (owner or manager only)
+      description: >
+        **Story 5.1 — Vendor Management.**
+        Creates a new vendor. Only name is required; phone, city, and notes are optional.
+        Duplicate phone numbers are allowed (no unique constraint on vendor phone).
       requestBody:
         required: true
         content:
@@ -802,6 +958,10 @@ paths:
     patch:
       tags: [Vendors]
       summary: Update a vendor (owner or manager only)
+      description: >
+        **Story 5.1 — Vendor Management.**
+        Updates one or more fields of a vendor record. Returns 404 if the vendor
+        does not belong to the authenticated store or has been soft-deleted.
       parameters:
         - $ref: '#/components/parameters/IntId'
       requestBody:
@@ -828,6 +988,10 @@ paths:
     delete:
       tags: [Vendors]
       summary: Soft-delete a vendor (owner only)
+      description: >
+        **Story 5.1 — Vendor Management.**
+        Sets the vendor's is_active flag to false. A second delete on the same
+        vendor returns 404 (idempotent protection via BUG-04 fix).
       parameters:
         - $ref: '#/components/parameters/IntId'
       responses:
@@ -854,6 +1018,11 @@ paths:
     get:
       tags: [Vendors]
       summary: Get suggested reorder quantities for a vendor based on 14-day demand (owner or manager only)
+      description: >
+        **Story 5.2 — Procurement.**
+        Computes suggested quantities for each price band supplied by the vendor.
+        Formula: max(0, ceil(dailyAvgSold × 14) − currentStock).
+        A quantity of 0 means stock is sufficient for the next 14 days.
       parameters:
         - $ref: '#/components/parameters/IntId'
       responses:
@@ -880,6 +1049,10 @@ paths:
     get:
       tags: [Reorders]
       summary: List all reorders for the store (owner or manager only)
+      description: >
+        **Story 5.2 — Procurement.**
+        Returns all purchase orders for the store, sorted by createdAt descending.
+        Each reorder includes its generated messageText and current status.
       responses:
         '200':
           description: Array of reorders
@@ -896,6 +1069,12 @@ paths:
     post:
       tags: [Reorders]
       summary: Create a new reorder (owner or manager only)
+      description: >
+        **Story 5.2 — Procurement.**
+        Creates a new purchase order for a vendor. A WhatsApp-formatted messageText
+        is generated server-side and stored with the reorder. Items with finalQty: 0
+        are excluded from the message. Returns 404 if the vendorId does not belong
+        to the authenticated store.
       requestBody:
         required: true
         content:
@@ -922,6 +1101,11 @@ paths:
     patch:
       tags: [Reorders]
       summary: Update reorder status (owner or manager only)
+      description: >
+        **Story 5.2 — Procurement.**
+        Advances a reorder through its lifecycle: draft, acknowledged, or fulfilled.
+        Any other status value is rejected with 400. Returns 404 if the reorder
+        does not belong to the authenticated store.
       parameters:
         - $ref: '#/components/parameters/IntId'
       requestBody:
@@ -952,6 +1136,10 @@ paths:
     get:
       tags: [Returns]
       summary: List recent returns for the store (owner or manager only)
+      description: >
+        **Story 6.1 — Returns and Exchanges.**
+        Returns the 100 most recent return and exchange records for the store,
+        ordered by createdAt descending. Owner and manager only.
       responses:
         '200':
           description: Array of return records (most recent 100)
@@ -968,6 +1156,12 @@ paths:
     post:
       tags: [Returns]
       summary: Create a return or exchange, restoring inventory stock
+      description: >
+        **Story 6.1 — Returns and Exchanges.**
+        Creates a return record and restores stock to the source inventory batch.
+        Return quantity cannot exceed the quantity in the original sale line item.
+        Returns 404 if the saleId or saleItemId does not exist.
+        Returns 400 if the return quantity exceeds the sold quantity.
       requestBody:
         required: true
         content:
@@ -994,6 +1188,11 @@ paths:
     get:
       tags: [Audit]
       summary: Get audit log entries for the store (owner only)
+      description: >
+        **Story 4.1 — Data Governance.**
+        Returns the 100 most recent audit log entries, including ephemeral data wipe events.
+        Each entry records the event type, affected record count, and timestamp.
+        Owner only.
       responses:
         '200':
           description: Array of audit log entries (most recent 100)
@@ -1012,6 +1211,11 @@ paths:
     post:
       tags: [Audit]
       summary: Wipe ephemeral/expired sales data after owner password verification (owner only)
+      description: >
+        **Story 4.1 — Data Governance.**
+        Deletes ephemeral or retention-expired sales records after verifying the owner's
+        current password. Creates an audit log entry recording how many records were pruned.
+        Returns 401 if the password is incorrect; 403 if the caller is not the owner.
       requestBody:
         required: true
         content:
@@ -1079,6 +1283,12 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
+    Conflict:
+      description: Unique constraint violation (duplicate resource)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
 
   # ── Schemas ──────────────────────────────────────────────────────────────────
   schemas:
@@ -1087,14 +1297,11 @@ components:
 
     ErrorResponse:
       type: object
-      required: [message]
+      required: [error]
       properties:
-        message:
+        error:
           type: string
           example: Resource not found
-        code:
-          type: string
-          example: VALIDATION_ERROR
 
     MessageResponse:
       type: object
