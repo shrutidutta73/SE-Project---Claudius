@@ -13,9 +13,11 @@ const asyncHandler = (fn: (req: Request, res: Response, next: NextFunction) => P
 
 // ── Schemas ──────────────────────────────────────────────────────────────────
 
+// lat/lng are bounded to valid WGS84 coordinate ranges so downstream
+// haversine math can't be skewed by out-of-range values.
 const GpsBodySchema = z.object({
-  lat: z.number(),
-  lng: z.number(),
+  lat: z.number().min(-90).max(90),
+  lng: z.number().min(-180).max(180),
 })
 
 // ── GET /today ────────────────────────────────────────────────────────────────

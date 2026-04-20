@@ -77,9 +77,22 @@ export async function createReturn(
       if (!row) {
         throw new AppError(`Sale item ${item.saleItemId} not found on this sale`, 404)
       }
-      if (item.quantity > row.quantity) {
+
+      // Account for quantities already returned against this sale_item so
+      // the same payload can't be submitted twice to double-refund / double-
+      // restock the inventory batch.
+      const priorReturns = await client.query<{ returned: string | null }>(
+        `SELECT COALESCE(SUM(quantity), 0)::text AS returned
+         FROM return_items
+         WHERE sale_item_id = $1`,
+        [item.saleItemId],
+      )
+      const alreadyReturned = Number(priorReturns.rows[0].returned ?? 0)
+
+      if (item.quantity + alreadyReturned > row.quantity) {
+        const remaining = row.quantity - alreadyReturned
         throw new AppError(
-          `Return quantity (${item.quantity}) exceeds original quantity (${row.quantity}) for sale item ${item.saleItemId}`,
+          `Return quantity (${item.quantity}) exceeds remaining returnable quantity (${remaining}) for sale item ${item.saleItemId}`,
           400,
         )
       }

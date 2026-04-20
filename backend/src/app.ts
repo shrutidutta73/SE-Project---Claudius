@@ -1,5 +1,5 @@
 import express from 'express'
-import cors from 'cors'
+import cors, { type CorsOptions } from 'cors'
 import pinoHttp from 'pino-http'
 import logger from './logger'
 import { errorHandler } from './middleware/errorHandler'
@@ -21,7 +21,23 @@ import returnsRouter from './routes/returns'
 
 const app = express()
 
-app.use(cors())
+// In production, only allow origins listed in CORS_ORIGINS (comma-separated).
+// In development/test, stay permissive so local tooling and tests work unchanged.
+const corsOptions: CorsOptions = (() => {
+  if (process.env.NODE_ENV !== 'production') return {}
+  const allowed = (process.env.CORS_ORIGINS ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+  return {
+    origin: (origin, cb) => {
+      if (!origin || allowed.includes(origin)) return cb(null, true)
+      cb(new Error(`Origin ${origin} not allowed by CORS`))
+    },
+  }
+})()
+
+app.use(cors(corsOptions))
 app.use(express.json({ limit: '10mb' })) // 10mb for base64 logos/avatars
 app.use(pinoHttp({ logger }))
 

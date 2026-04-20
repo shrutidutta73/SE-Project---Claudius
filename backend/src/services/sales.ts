@@ -51,13 +51,7 @@ export async function createSale(
     }
 
     // ── Step 2: FIFO batch deduction for non-custom items ─────────────────────
-    // Map: priceBandId -> usedBatches (only for items that require deduction)
-    // For items with the same priceBandId we process them together
-    const itemBatchMap = new Map<
-      number,
-      Map<number, Array<{ batchId: number; qty: number }>>
-    >()
-    // itemBatchMap[itemIndex] -> usedBatches
+    // perItemBatches[i] holds the batches (and qtys) consumed for items[i].
     const perItemBatches: Array<Array<{ batchId: number; qty: number }>> = []
 
     for (let i = 0; i < items.length; i++) {
@@ -112,7 +106,13 @@ export async function createSale(
     const { billing_mode: billingMode, retention_days: retentionDays } = storeResult.rows[0]
 
     // ── Step 4: Insert sale ───────────────────────────────────────────────────
-    const totalAmount = items.reduce((sum, item) => sum + item.subtotal, 0) - discountAmount
+    const cartSubtotal = items.reduce((sum, item) => sum + item.subtotal, 0)
+    // A discount larger than the cart would produce a negative total_amount
+    // on the sale row — block it at the service boundary.
+    if (discountAmount > cartSubtotal) {
+      throw new AppError('Discount exceeds cart subtotal', 400)
+    }
+    const totalAmount = cartSubtotal - discountAmount
     const isEphemeral = billingMode === 'ephemeral'
     const expiresAt = isEphemeral
       ? new Date(Date.now() + retentionDays * 24 * 60 * 60 * 1000)

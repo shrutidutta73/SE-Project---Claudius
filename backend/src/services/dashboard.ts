@@ -91,15 +91,15 @@ export async function getDailySummary(storeId: number, range: 'weekly' | 'monthl
     throw new AppError('Invalid range. Must be "weekly" or "monthly"', 400)
   }
 
-  const interval = range === 'weekly' ? '6 days' : '29 days'
+  const days = range === 'weekly' ? 6 : 29
 
   const result = await pool.query<DailySummaryRow>(
     `SELECT id, store_id, date, price_band_id, category_name, band_price,
       total_qty_sold, total_revenue, total_returns, total_refunds
     FROM daily_sales_summary
-    WHERE store_id = $1 AND date >= CURRENT_DATE - INTERVAL '${interval}'
+    WHERE store_id = $1 AND date >= CURRENT_DATE - ($2 || ' days')::INTERVAL
     ORDER BY date ASC, category_name, band_price`,
-    [storeId],
+    [storeId, days],
   )
 
   return result.rows.map((row) => ({

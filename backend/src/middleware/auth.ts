@@ -24,7 +24,9 @@ export function authenticate(req: Request, _res: Response, next: NextFunction): 
   }
   try {
     const token = header.slice(7)
-    req.user = jwt.verify(token, env.JWT_SECRET) as JwtPayload
+    // Pin the algorithm — jsonwebtoken will otherwise accept whatever the
+    // token's header claims, which is the classic alg-confusion vector.
+    req.user = jwt.verify(token, env.JWT_SECRET, { algorithms: ['HS256'] }) as JwtPayload
     next()
   } catch {
     throw new AppError('Invalid or expired token', 401)

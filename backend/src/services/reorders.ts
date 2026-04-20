@@ -186,8 +186,12 @@ export async function updateReorderStatus(
   reorderId: number,
   status: ReorderStatus,
 ): Promise<Reorder> {
+  // Refresh sent_at whenever we transition *into* 'sent' so a reorder that
+  // was drafted, sent, reverted, then re-sent reflects the latest send time.
   const result = await pool.query(
-    `UPDATE reorders SET status = $1
+    `UPDATE reorders
+     SET status = $1,
+         sent_at = CASE WHEN $1 = 'sent' THEN NOW() ELSE sent_at END
      WHERE id = $2 AND store_id = $3
      RETURNING *`,
     [status, reorderId, storeId],
