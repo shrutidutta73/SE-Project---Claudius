@@ -125,11 +125,15 @@ export async function addBatch(
     throw new AppError('Price band not found for this store', 404, 'NOT_FOUND')
   }
 
-  await pool.query<Record<string, unknown>>(
+  // Capture the new id via RETURNING — the previous approach re-selected
+  // by (store, band, user) ORDER BY created_at DESC, which can return a
+  // different concurrently-inserted row for the same user/band combo.
+  const insertResult = await pool.query<{ id: number }>(
     `INSERT INTO inventory_batches
        (store_id, price_band_id, vendor_id, quantity_added, quantity_remaining,
         cost_price, added_by, notes)
-     VALUES ($1, $2, $3, $4, $4, $5, $6, $7)`,
+     VALUES ($1, $2, $3, $4, $4, $5, $6, $7)
+     RETURNING id`,
     [
       storeId,
       data.priceBandId,
@@ -140,21 +144,13 @@ export async function addBatch(
       data.notes ?? null,
     ],
   )
+  const newBatchId = insertResult.rows[0].id
 
-  // Fetch the inserted row with computed fields (latest for this store+band+user)
   const fetchSql = `
     ${BASE_SELECT}
-    WHERE ib.store_id = $1
-      AND ib.price_band_id = $2
-      AND ib.added_by = $3
-    ORDER BY ib.created_at DESC
-    LIMIT 1
+    WHERE ib.id = $1 AND ib.store_id = $2
   `
-  const result = await pool.query<Record<string, unknown>>(fetchSql, [
-    storeId,
-    data.priceBandId,
-    userId,
-  ])
+  const result = await pool.query<Record<string, unknown>>(fetchSql, [newBatchId, storeId])
 
   if (result.rowCount === 0) {
     throw new AppError('Failed to retrieve inserted batch', 500)
