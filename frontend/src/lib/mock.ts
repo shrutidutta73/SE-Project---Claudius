@@ -14,6 +14,8 @@ export const MOCK_STORE: Store = {
   gpsLatitude: 25.4358,
   gpsLongitude: 81.8463,
   gpsRadiusM: 100,
+  gpsRequireClockIn: false,
+  gpsRequireClockOut: false,
   billingMode: 'ephemeral',
   retentionDays: 14,
   createdAt: '2024-01-15T00:00:00Z',

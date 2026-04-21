@@ -21,11 +21,13 @@ interface UserFormProps {
   withEmail?: boolean
   withPassword?: boolean
   withPin?: boolean
+  apiError?: string | null
+  submitting?: boolean
   onSubmit: (name: string, phone: string, email?: string, password?: string, pin?: string) => void
   onCancel: () => void
   submitLabel: string
 }
-function UserForm({ initial, withEmail, withPassword, withPin, onSubmit, onCancel, submitLabel }: UserFormProps) {
+function UserForm({ initial, withEmail, withPassword, withPin, apiError, submitting, onSubmit, onCancel, submitLabel }: UserFormProps) {
   const [name,     setName]     = useState(initial?.name  ?? '')
   const [phone,    setPhone]    = useState(initial?.phone ?? '')
   const [email,    setEmail]    = useState(initial?.email ?? '')
@@ -119,9 +121,14 @@ function UserForm({ initial, withEmail, withPassword, withPin, onSubmit, onCance
         </div>
       )}
       {err && <p className="text-xs" style={{ color: 'var(--danger)' }}>{err}</p>}
+      {apiError && !err && (
+        <p className="text-xs rounded-md px-3 py-2" style={{ color: 'var(--danger)', background: 'var(--danger-bg)', border: '1px solid var(--danger-border)' }}>
+          {apiError}
+        </p>
+      )}
       <div className="flex gap-2 pt-1">
-        <button type="button" className="btn btn-ghost flex-1" onClick={onCancel}>Cancel</button>
-        <button type="submit"  className="btn btn-primary flex-1">{submitLabel}</button>
+        <button type="button" className="btn btn-ghost flex-1" onClick={onCancel} disabled={submitting}>Cancel</button>
+        <button type="submit"  className="btn btn-primary flex-1" disabled={submitting}>{submitting ? 'Saving…' : submitLabel}</button>
       </div>
     </form>
   )
@@ -238,18 +245,29 @@ function StaffDashboard({ store }: StaffDashboardProps) {
 
   const [revenueToday, setRevenueToday] = useState(0)
   const [salesCount,   setSalesCount]   = useState(0)
+  const [clockError,   setClockError]   = useState<string | null>(null)
+  const [clockBusy,    setClockBusy]    = useState(false)
 
+  // Restore today's clock-in state from the server so a page reload (or a
+  // fresh login) doesn't reset the button to "Clock In" when the user is
+  // actually still on the clock. Multiple shifts per day are allowed, so we
+  // trust the server's `clockedIn` flag, which reflects whether any open
+  // shift exists today.
   useEffect(() => {
     api.get<StaffLeaderboardEntry[]>('/staff/leaderboard')
       .then(entries => {
         const entry = entries.find(e => e.userId === currentUser.id)
-        if (entry) {
-          setRevenueToday(entry.revenueToday)
-          setSalesCount(entry.salesCountToday)
+        if (!entry) return
+        setRevenueToday(entry.revenueToday)
+        setSalesCount(entry.salesCountToday)
+        if (entry.clockedIn && entry.checkInAt) {
+          setClockedIn(true, new Date(entry.checkInAt))
+        } else {
+          setClockedIn(false)
         }
       })
       .catch(() => {/* ignore */})
-  }, [currentUser.id])
+  }, [currentUser.id, setClockedIn])
 
   // Fallback store used only if parent hasn't loaded yet
   const effectiveStore: Store = store ?? {
@@ -259,49 +277,106 @@ function StaffDashboard({ store }: StaffDashboardProps) {
     gpsLatitude: 0,
     gpsLongitude: 0,
     gpsRadiusM: 500,
+    gpsRequireClockIn: false,
+    gpsRequireClockOut: false,
     billingMode: 'structured',
     retentionDays: null,
     createdAt: '',
     updatedAt: '',
   }
 
-  async function handleClock(action: 'in' | 'out') {
-    if (!navigator.geolocation) {
-      // No geolocation — call with zeros
-      try {
-        if (action === 'in') {
-          await api.post('/attendance/clock-in', { lat: 0, lng: 0 })
+  function friendlyClockError(err: unknown): string {
+    const raw = err instanceof Error ? err.message : String(err)
+    if (/radius|outside/i.test(raw))   return "You're outside the store's GPS radius. Move closer and try again."
+    if (/already clocked/i.test(raw))  return "You're already clocked in today."
+    if (/not clocked/i.test(raw))      return "You aren't currently clocked in."
+    if (/token|unauth/i.test(raw))     return 'Your session expired. Log in again.'
+    return raw || 'Could not update attendance. Try again.'
+  }
+
+  // Browser geolocation wrapped in a promise so we can await it.
+  // Rejects on denial / timeout / no geolocation support.
+  //
+  // Two-stage strategy: try network/WiFi positioning first (fast, works on
+  // desktop without GPS hardware and on mobile indoors), then fall back to
+  // high-accuracy GPS with a longer timeout. enableHighAccuracy=true forces
+  // the OS GPS chip, which times out on most desktops where no GPS exists.
+  function getCoords(): Promise<{ lat: number; lng: number }> {
+    return new Promise((resolve, reject) => {
+      if (!navigator.geolocation) {
+        reject(new Error('This device does not support GPS.'))
+        return
+      }
+
+      const onFinal = (err: GeolocationPositionError) => {
+        if (err.code === err.PERMISSION_DENIED) {
+          reject(new Error('Location permission was denied.'))
+        } else if (err.code === err.POSITION_UNAVAILABLE) {
+          reject(new Error("Your device couldn't determine its location. Check that location services are turned on for the OS and browser."))
+        } else if (err.code === err.TIMEOUT) {
+          reject(new Error('Location request took too long. Try again — sometimes the first attempt is slow.'))
         } else {
-          await api.post('/attendance/clock-out', { lat: 0, lng: 0 })
+          reject(new Error('Could not read GPS.'))
         }
-      } catch {/* ignore */}
-      setClockedIn(action === 'in')
-      return
+      }
+
+      navigator.geolocation.getCurrentPosition(
+        pos => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+        // First-stage failure: retry with high-accuracy if it wasn't a permission issue.
+        err => {
+          if (err.code === err.PERMISSION_DENIED) {
+            reject(new Error('Location permission was denied.'))
+            return
+          }
+          navigator.geolocation.getCurrentPosition(
+            pos => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+            onFinal,
+            { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 },
+          )
+        },
+        // Fast first pass: coarse accuracy, accept cached position up to 1 min old.
+        { enableHighAccuracy: false, timeout: 8000, maximumAge: 60000 },
+      )
+    })
+  }
+
+  async function handleClock(action: 'in' | 'out') {
+    if (clockBusy) return
+    setClockError(null)
+    setClockBusy(true)
+
+    const gpsRequired = action === 'in'
+      ? gpsPolicy.requireOnClockIn
+      : gpsPolicy.requireOnClockOut
+
+    // When the store hasn't enabled GPS enforcement for this action, don't
+    // even touch navigator.geolocation — no browser permission prompt, no
+    // 10-second wait for a fix. The backend skips validation too.
+    let coords: { lat: number; lng: number } = { lat: 0, lng: 0 }
+    if (gpsRequired) {
+      try {
+        coords = await getCoords()
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Could not read GPS.'
+        setClockError(`${msg} GPS is required to clock ${action} — please enable location and try again.`)
+        setClockBusy(false)
+        return
+      }
     }
-    navigator.geolocation.getCurrentPosition(
-      async pos => {
-        const { latitude: lat, longitude: lng } = pos.coords
-        try {
-          if (action === 'in') {
-            await api.post('/attendance/clock-in', { lat, lng })
-          } else {
-            await api.post('/attendance/clock-out', { lat, lng })
-          }
-        } catch {/* ignore */}
-        setClockedIn(action === 'in')
-      },
-      async () => {
-        // Position error — fall back to zeros
-        try {
-          if (action === 'in') {
-            await api.post('/attendance/clock-in', { lat: 0, lng: 0 })
-          } else {
-            await api.post('/attendance/clock-out', { lat: 0, lng: 0 })
-          }
-        } catch {/* ignore */}
-        setClockedIn(action === 'in')
-      },
-    )
+
+    try {
+      if (action === 'in') {
+        await api.post('/attendance/clock-in', coords)
+      } else {
+        await api.post('/attendance/clock-out', coords)
+      }
+      // Only flip local state after the server actually accepted the change.
+      setClockedIn(action === 'in')
+    } catch (err) {
+      setClockError(friendlyClockError(err))
+    } finally {
+      setClockBusy(false)
+    }
   }
 
   return (
@@ -314,8 +389,34 @@ function StaffDashboard({ store }: StaffDashboardProps) {
           store={effectiveStore}
           clockedIn={clockedIn}
           gpsPolicy={gpsPolicy}
+          busy={clockBusy}
           onClock={handleClock}
         />
+
+        {/* Clock error (permission denied, outside radius, session expired, ...) */}
+        {clockError && (
+          <div
+            className="card p-3 flex items-start gap-2.5 animate-slide-up"
+            role="alert"
+            style={{ background: 'var(--danger-bg)', borderColor: 'var(--danger-border)' }}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--danger)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="flex-shrink-0 mt-0.5">
+              <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+            </svg>
+            <p className="text-sm font-medium leading-relaxed flex-1" style={{ color: 'var(--danger)' }}>
+              {clockError}
+            </p>
+            <button
+              type="button"
+              onClick={() => setClockError(null)}
+              className="text-xs font-semibold flex-shrink-0"
+              style={{ color: 'var(--danger)' }}
+              aria-label="Dismiss error"
+            >
+              ✕
+            </button>
+          </div>
+        )}
 
         {/* Active shift panel */}
         {clockedIn && (
@@ -374,9 +475,84 @@ export default function StaffPage() {
 
   const { globalClockIn, globalClockOut, setGlobal } = useGpsSettingsStore()
   const [tab, setTab] = useState<'staff' | 'roster'>('staff')
+
+  // Fallback store used only if /store hasn't loaded yet
+  const effectiveStore: Store = store ?? {
+    id: 0,
+    name: '',
+    address: '',
+    gpsLatitude: 0,
+    gpsLongitude: 0,
+    gpsRadiusM: 500,
+    gpsRequireClockIn: false,
+    gpsRequireClockOut: false,
+    billingMode: 'structured',
+    retentionDays: null,
+    createdAt: '',
+    updatedAt: '',
+  }
   const [showAdd,      setShowAdd]      = useState(false)
   const [editTarget,   setEditTarget]   = useState<User | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<User | null>(null)
+
+  // Inline API error + submitting state for the Add / Edit modals
+  const [formError,     setFormError]     = useState<string | null>(null)
+  const [formSubmitting, setFormSubmitting] = useState(false)
+
+  // Error feedback for the GPS enforcement toggles
+  const [gpsError, setGpsError] = useState<string | null>(null)
+
+  // Persist GPS enforcement flags; reverts the optimistic toggle if the
+  // server refuses (e.g. 403 or network error). `prev` is the state before
+  // the optimistic update so we know what to roll back to.
+  async function saveGpsEnforcement(
+    next: { clockIn: boolean; clockOut: boolean },
+    prev: { clockIn: boolean; clockOut: boolean },
+  ) {
+    const s = store ?? effectiveStore
+    setGpsError(null)
+    try {
+      await api.patch('/store/gps-settings', {
+        gpsLatitude: s.gpsLatitude,
+        gpsLongitude: s.gpsLongitude,
+        gpsRadiusM: s.gpsRadiusM,
+        gpsRequireClockIn: next.clockIn,
+        gpsRequireClockOut: next.clockOut,
+      })
+    } catch (err) {
+      setGlobal({ clockIn: prev.clockIn, clockOut: prev.clockOut })
+      setGpsError(friendlyError(err))
+    }
+  }
+
+  function openAddModal() {
+    setFormError(null)
+    setShowAdd(true)
+  }
+  function closeAddModal() {
+    setShowAdd(false)
+    setFormError(null)
+    setFormSubmitting(false)
+  }
+  function openEditModal(u: User) {
+    setFormError(null)
+    setEditTarget(u)
+  }
+  function closeEditModal() {
+    setEditTarget(null)
+    setFormError(null)
+    setFormSubmitting(false)
+  }
+
+  function friendlyError(err: unknown): string {
+    const raw = err instanceof Error ? err.message : String(err)
+    if (!raw) return 'Could not save. Please try again.'
+    if (/duplicate/i.test(raw))   return 'That phone number is already in use.'
+    if (/validation/i.test(raw))  return 'Invalid input — check name, phone, and PIN/password.'
+    if (/token|unauth/i.test(raw)) return 'Your session expired. Log in again.'
+    if (/forbidden|permission/i.test(raw)) return "You don't have permission to do that."
+    return raw
+  }
 
   // Fetch users and store on mount; seed GPS toggles from store
   useEffect(() => {
@@ -429,38 +605,62 @@ export default function StaffPage() {
   }
 
   async function handleAddManager(name: string, phone: string, email?: string, password?: string) {
+    setFormError(null)
+    setFormSubmitting(true)
     try {
       const newUser = await api.post<User>('/users', { name, phone, email, role: 'manager', password })
       setUsers(prev => [...prev, newUser])
-      setShowAdd(false)
-    } catch {/* ignore */}
+      closeAddModal()
+    } catch (err) {
+      setFormError(friendlyError(err))
+    } finally {
+      setFormSubmitting(false)
+    }
   }
 
   async function handleAddStaff(name: string, phone: string, _email?: string, _password?: string, pin?: string) {
+    setFormError(null)
+    setFormSubmitting(true)
     try {
       const newUser = await api.post<User>('/users', { name, phone, role: 'staff', pin })
       setUsers(prev => [...prev, newUser])
-      setShowAdd(false)
-    } catch {/* ignore */}
+      closeAddModal()
+    } catch (err) {
+      setFormError(friendlyError(err))
+    } finally {
+      setFormSubmitting(false)
+    }
   }
 
   async function handleUpdateUser(id: number, patch: { name: string; phone: string; email?: string }) {
+    setFormError(null)
+    setFormSubmitting(true)
     try {
       const updated = await api.patch<User>(`/users/${id}`, patch)
       setUsers(prev => prev.map(u => u.id === id ? updated : u))
-      setEditTarget(null)
-    } catch {/* ignore */}
+      closeEditModal()
+    } catch (err) {
+      setFormError(friendlyError(err))
+    } finally {
+      setFormSubmitting(false)
+    }
   }
 
   async function handleUpdateStaff(id: number, name: string, phone: string, pin?: string) {
+    setFormError(null)
+    setFormSubmitting(true)
     try {
       const updated = await api.patch<User>(`/users/${id}`, { name, phone })
       setUsers(prev => prev.map(u => u.id === id ? updated : u))
       if (pin) {
         await api.patch(`/users/${id}/pin`, { pin })
       }
-      setEditTarget(null)
-    } catch {/* ignore */}
+      closeEditModal()
+    } catch (err) {
+      setFormError(friendlyError(err))
+    } finally {
+      setFormSubmitting(false)
+    }
   }
 
   async function handleDeleteUser(id: number) {
@@ -494,7 +694,7 @@ export default function StaffPage() {
             <h1 className="text-xl font-bold" style={{ color: 'var(--text-1)' }}>Managers</h1>
             <p className="text-sm mt-0.5" style={{ color: 'var(--text-3)' }}>{managers.length} manager{managers.length !== 1 ? 's' : ''}</p>
           </div>
-          <button onClick={() => setShowAdd(true)} className="btn btn-primary flex items-center gap-1.5 text-sm">
+          <button onClick={openAddModal} className="btn btn-primary flex items-center gap-1.5 text-sm">
             <IcPlus /> Add Manager
           </button>
         </div>
@@ -510,7 +710,7 @@ export default function StaffPage() {
                 key={u.id}
                 user={u}
                 isCurrentUser={u.id === currentUser?.id}
-                onEdit={setEditTarget}
+                onEdit={openEditModal}
                 onDelete={setDeleteTarget}
                 onAvatarSave={dataUrl => handleAvatarSave(u.id, dataUrl)}
               />
@@ -519,24 +719,28 @@ export default function StaffPage() {
         </div>
 
         {/* Add manager modal */}
-        <Modal open={showAdd} onClose={() => setShowAdd(false)} title="Add Manager">
+        <Modal open={showAdd} onClose={closeAddModal} title="Add Manager">
           <UserForm
             withEmail
             withPassword
+            apiError={formError}
+            submitting={formSubmitting}
             onSubmit={handleAddManager}
-            onCancel={() => setShowAdd(false)}
+            onCancel={closeAddModal}
             submitLabel="Add Manager"
           />
         </Modal>
 
         {/* Edit modal */}
-        <Modal open={!!editTarget} onClose={() => setEditTarget(null)} title="Edit Manager">
+        <Modal open={!!editTarget} onClose={closeEditModal} title="Edit Manager">
           {editTarget && (
             <UserForm
               withEmail
               initial={{ name: editTarget.name, phone: editTarget.phone, email: editTarget.email ?? '' }}
+              apiError={formError}
+              submitting={formSubmitting}
               onSubmit={(name, phone, email) => handleUpdateUser(editTarget.id, { name, phone, email })}
-              onCancel={() => setEditTarget(null)}
+              onCancel={closeEditModal}
               submitLabel="Save Changes"
             />
           )}
@@ -589,7 +793,7 @@ export default function StaffPage() {
           <p className="text-sm mt-0.5" style={{ color: 'var(--text-3)' }}>{onShift} on shift · {staff.length} total</p>
         </div>
         {tab === 'staff' && (
-          <button onClick={() => setShowAdd(true)} className="btn btn-primary flex items-center gap-1.5 text-sm">
+          <button onClick={openAddModal} className="btn btn-primary flex items-center gap-1.5 text-sm">
             <IcPlus /> Add Staff
           </button>
         )}
@@ -636,12 +840,9 @@ export default function StaffPage() {
               description="Staff must be within store radius to clock in"
               active={globalClockIn}
               onChange={v => {
+                const prev = { clockIn: globalClockIn, clockOut: globalClockOut }
                 setGlobal({ clockIn: v })
-                const s = store ?? effectiveStore
-                api.patch('/store/gps-settings', {
-                  gpsLatitude: s.gpsLatitude, gpsLongitude: s.gpsLongitude, gpsRadiusM: s.gpsRadiusM,
-                  gpsRequireClockIn: v, gpsRequireClockOut: globalClockOut,
-                }).catch(() => {})
+                saveGpsEnforcement({ clockIn: v, clockOut: globalClockOut }, prev)
               }}
             />
             <div style={{ height: 1, background: 'var(--border)' }} />
@@ -650,14 +851,19 @@ export default function StaffPage() {
               description="Staff must be within store radius to clock out"
               active={globalClockOut}
               onChange={v => {
+                const prev = { clockIn: globalClockIn, clockOut: globalClockOut }
                 setGlobal({ clockOut: v })
-                const s = store ?? effectiveStore
-                api.patch('/store/gps-settings', {
-                  gpsLatitude: s.gpsLatitude, gpsLongitude: s.gpsLongitude, gpsRadiusM: s.gpsRadiusM,
-                  gpsRequireClockIn: globalClockIn, gpsRequireClockOut: v,
-                }).catch(() => {})
+                saveGpsEnforcement({ clockIn: globalClockIn, clockOut: v }, prev)
               }}
             />
+            {gpsError && (
+              <p
+                className="text-xs rounded-md px-3 py-2 mt-1"
+                style={{ color: 'var(--danger)', background: 'var(--danger-bg)', border: '1px solid var(--danger-border)' }}
+              >
+                {gpsError}
+              </p>
+            )}
           </div>
 
           {/* Stats */}
@@ -692,7 +898,7 @@ export default function StaffPage() {
                         <p className="text-xs mt-0.5" style={{ color: 'var(--text-3)' }}>{u.phone}</p>
                       </div>
                       <div className="flex items-center gap-1 flex-shrink-0">
-                        <button onClick={() => setEditTarget(u)} className="w-8 h-8 flex items-center justify-center rounded-md" style={{ color: 'var(--text-3)', border: '1px solid var(--border)' }}><IcEdit /></button>
+                        <button onClick={() => openEditModal(u)} className="w-8 h-8 flex items-center justify-center rounded-md" style={{ color: 'var(--text-3)', border: '1px solid var(--border)' }}><IcEdit /></button>
                         <button onClick={() => setDeleteTarget(u)} className="w-8 h-8 flex items-center justify-center rounded-md" style={{ color: 'var(--danger)', border: '1px solid var(--border)' }}><IcDelete /></button>
                       </div>
                     </div>
@@ -801,23 +1007,27 @@ export default function StaffPage() {
       )}
 
       {/* Add staff modal */}
-      <Modal open={showAdd} onClose={() => setShowAdd(false)} title="Add Staff Member">
+      <Modal open={showAdd} onClose={closeAddModal} title="Add Staff Member">
         <UserForm
           withPin
+          apiError={formError}
+          submitting={formSubmitting}
           onSubmit={handleAddStaff}
-          onCancel={() => setShowAdd(false)}
+          onCancel={closeAddModal}
           submitLabel="Add Staff"
         />
       </Modal>
 
       {/* Edit modal */}
-      <Modal open={!!editTarget} onClose={() => setEditTarget(null)} title="Edit Staff Member">
+      <Modal open={!!editTarget} onClose={closeEditModal} title="Edit Staff Member">
         {editTarget && (
           <UserForm
             withPin
             initial={{ name: editTarget.name, phone: editTarget.phone }}
+            apiError={formError}
+            submitting={formSubmitting}
             onSubmit={(name, phone, _email, _password, pin) => handleUpdateStaff(editTarget.id, name, phone, pin)}
-            onCancel={() => setEditTarget(null)}
+            onCancel={closeEditModal}
             submitLabel="Save Changes"
           />
         )}

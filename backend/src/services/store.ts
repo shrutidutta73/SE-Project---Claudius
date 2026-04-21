@@ -37,6 +37,8 @@ function mapStore(row: StoreRow) {
   }
 }
 
+const VALID_RETENTION_DAYS = [7, 14, 30, 90]
+
 export async function getStore(storeId: number) {
   const result = await pool.query<StoreRow>(
     'SELECT * FROM stores WHERE id = $1',
@@ -90,26 +92,88 @@ export async function updateStore(
 export async function updateBillingMode(
   storeId: number,
   billingMode: 'structured' | 'ephemeral',
+  opts: { retentionDays?: number; backdate?: boolean } = {},
 ) {
   if (billingMode !== 'structured' && billingMode !== 'ephemeral') {
     throw new AppError('Invalid billing mode. Must be "structured" or "ephemeral"', 400)
   }
-
-  // When switching to 'structured', clear retention_days
-  const retentionClause = billingMode === 'structured' ? ', retention_days = NULL' : ''
-
-  const result = await pool.query<StoreRow>(
-    `UPDATE stores SET billing_mode = $1${retentionClause}, updated_at = NOW() WHERE id = $2 RETURNING *`,
-    [billingMode, storeId],
-  )
-
-  if (result.rows.length === 0) {
-    throw new AppError('Store not found', 404)
+  if (opts.retentionDays !== undefined && !VALID_RETENTION_DAYS.includes(opts.retentionDays)) {
+    throw new AppError(
+      `Invalid retention days. Must be one of: ${VALID_RETENTION_DAYS.join(', ')}`,
+      400,
+    )
   }
-  return mapStore(result.rows[0])
-}
 
-const VALID_RETENTION_DAYS = [7, 14, 30, 90]
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+
+    // Update the store's billing mode (and retention when going ephemeral).
+    // Structured always clears retention_days; ephemeral sets it only if the
+    // caller provided one, otherwise the existing value is kept.
+    let storeResult
+    if (billingMode === 'structured') {
+      storeResult = await client.query<StoreRow>(
+        `UPDATE stores SET billing_mode = $1, retention_days = NULL, updated_at = NOW()
+         WHERE id = $2 RETURNING *`,
+        [billingMode, storeId],
+      )
+    } else if (opts.retentionDays !== undefined) {
+      storeResult = await client.query<StoreRow>(
+        `UPDATE stores SET billing_mode = $1, retention_days = $2, updated_at = NOW()
+         WHERE id = $3 RETURNING *`,
+        [billingMode, opts.retentionDays, storeId],
+      )
+    } else {
+      storeResult = await client.query<StoreRow>(
+        `UPDATE stores SET billing_mode = $1, updated_at = NOW()
+         WHERE id = $2 RETURNING *`,
+        [billingMode, storeId],
+      )
+    }
+    if (storeResult.rows.length === 0) {
+      throw new AppError('Store not found', 404)
+    }
+    const store = storeResult.rows[0]
+
+    // Optional retroactive flip of historical sales. Owner-only flow so this
+    // is opt-in and irreversible in the current session — the audit log
+    // trail preserves record counts before and after a data wipe regardless.
+    if (opts.backdate) {
+      if (billingMode === 'ephemeral') {
+        const days = opts.retentionDays ?? store.retention_days
+        if (!days) {
+          throw new AppError(
+            'Retention days must be known to backdate to ephemeral',
+            400,
+          )
+        }
+        await client.query(
+          `UPDATE sales
+           SET is_ephemeral = TRUE,
+               expires_at   = created_at + ($1::int || ' days')::INTERVAL
+           WHERE store_id = $2`,
+          [days, storeId],
+        )
+      } else {
+        await client.query(
+          `UPDATE sales
+           SET is_ephemeral = FALSE, expires_at = NULL
+           WHERE store_id = $1`,
+          [storeId],
+        )
+      }
+    }
+
+    await client.query('COMMIT')
+    return mapStore(store)
+  } catch (err) {
+    await client.query('ROLLBACK')
+    throw err
+  } finally {
+    client.release()
+  }
+}
 
 export async function updateRetention(
   storeId: number,

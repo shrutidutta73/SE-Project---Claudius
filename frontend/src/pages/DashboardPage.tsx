@@ -46,6 +46,37 @@ export default function DashboardPage() {
       .catch(console.error)
   }, [])
 
+  // CSV export of the loaded daily summary rows. Uses a blob + anchor so it
+  // works offline and doesn't require a backend endpoint.
+  function handleExport() {
+    if (data.length === 0) return
+    const header = ['Date', 'Category', 'Band Price', 'Qty Sold', 'Revenue', 'Returns', 'Refunds']
+    const rows = data.map(d => [
+      d.date,
+      d.categoryName,
+      d.bandPrice,
+      d.totalQtySold,
+      d.totalRevenue,
+      d.totalReturns ?? 0,
+      d.totalRefunds ?? 0,
+    ])
+    const escape = (v: string | number) => {
+      const s = String(v)
+      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
+    }
+    const csv = [header, ...rows].map(r => r.map(escape).join(',')).join('\n')
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+    const url  = URL.createObjectURL(blob)
+    const a    = document.createElement('a')
+    const stamp = new Date().toISOString().slice(0, 10)
+    a.href = url
+    a.download = `sales-${range}-${stamp}.csv`
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+  }
+
   const stats = useMemo(() => {
     const totalRevenue = data.reduce((s, d) => s + d.totalRevenue, 0)
     const unitsSold    = data.reduce((s, d) => s + d.totalQtySold, 0)
@@ -140,7 +171,9 @@ export default function DashboardPage() {
                 </button>
               ))}
             </div>
-            <Button variant="ghost" size="sm">Export</Button>
+            <Button variant="ghost" size="sm" onClick={handleExport} disabled={data.length === 0}>
+              Export CSV
+            </Button>
           </div>
         }
       />

@@ -8,10 +8,23 @@ interface Props {
   onAction: (id: number, action: 'close' | 'adjust' | 'defective') => void
 }
 
+// The Defective action just appends [DEFECTIVE] to notes (the batch stays on
+// the books for audit). We surface that flag in the status column so clicking
+// the button has a visible effect.
+function isDefective(batch: InventoryBatchDetail): boolean {
+  return !!batch.notes && /\[DEFECTIVE\]/.test(batch.notes)
+}
+
 function StatusBadge({ batch }: { batch: InventoryBatchDetail }) {
-  if (batch.quantityRemaining === 0) return <Badge color="terracotta">OUT</Badge>
-  if (batch.ageInDays > 60)         return <Badge color="amber">AGING</Badge>
-  return <Badge color="sage">ACTIVE</Badge>
+  const defective = isDefective(batch)
+  return (
+    <span className="inline-flex items-center gap-1 flex-wrap">
+      {batch.quantityRemaining === 0 && <Badge color="terracotta">OUT</Badge>}
+      {batch.quantityRemaining > 0 && batch.ageInDays > 60 && <Badge color="amber">AGING</Badge>}
+      {batch.quantityRemaining > 0 && batch.ageInDays <= 60 && !defective && <Badge color="sage">ACTIVE</Badge>}
+      {defective && <Badge color="danger">DEFECTIVE</Badge>}
+    </span>
+  )
 }
 
 function MarginWarning() {
@@ -76,8 +89,13 @@ export default function BatchList({ batches, onAction }: Props) {
                 <Button variant="ghost" size="sm" onClick={() => onAction(batch.id, 'adjust')}>
                   Adjust
                 </Button>
-                <Button variant="secondary" size="sm" onClick={() => onAction(batch.id, 'defective')}>
-                  Defective
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  disabled={isDefective(batch)}
+                  onClick={() => onAction(batch.id, 'defective')}
+                >
+                  {isDefective(batch) ? 'Flagged' : 'Defective'}
                 </Button>
               </div>
             </div>
@@ -140,7 +158,14 @@ export default function BatchList({ batches, onAction }: Props) {
                     <div className="flex gap-1.5">
                       <Button variant="ghost" size="sm" onClick={() => onAction(batch.id, 'close')}>Close</Button>
                       <Button variant="ghost" size="sm" onClick={() => onAction(batch.id, 'adjust')}>Adjust</Button>
-                      <Button variant="secondary" size="sm" onClick={() => onAction(batch.id, 'defective')}>Defective</Button>
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        disabled={isDefective(batch)}
+                        onClick={() => onAction(batch.id, 'defective')}
+                      >
+                        {isDefective(batch) ? 'Flagged' : 'Defective'}
+                      </Button>
                     </div>
                   </td>
                 </tr>

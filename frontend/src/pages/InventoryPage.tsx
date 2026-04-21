@@ -1,31 +1,45 @@
 import { useState, useEffect } from 'react'
 import type { BatchFilter, InventoryBatchDetail, AddBatchForm } from '../types'
-import type { Category, PriceBand, VendorWithDues, MatrixRow } from '../types'
+import type { Category, PriceBand, PriceBandWithStock, VendorWithDues, MatrixRow } from '../types'
 import { api } from '../lib/api'
 import PageHeader from '../components/ui/PageHeader'
 import TabBar from '../components/ui/TabBar'
 import Modal from '../components/ui/Modal'
 import Button from '../components/ui/Button'
+import Input from '../components/ui/Input'
+import { useAuthStore } from '../store/roleStore'
 import FilterPills from '../components/inventory/FilterPills'
 import MatrixView from '../components/inventory/MatrixView'
 import BatchList from '../components/inventory/BatchList'
 import BatchForm from '../components/inventory/BatchForm'
+import CategoriesView from '../components/inventory/CategoriesView'
 
 const TABS = [
-  { id: 'matrix', label: 'Matrix View' },
-  { id: 'batches', label: 'Batch List' },
+  { id: 'matrix',     label: 'Matrix View' },
+  { id: 'categories', label: 'Categories' },
+  { id: 'batches',    label: 'Batch List' },
 ]
 
 export default function InventoryPage() {
+  const role = useAuthStore(s => s.currentUser?.role ?? 'staff')
+  const canManageCategories = role === 'owner' || role === 'manager'
+
   const [tab, setTab] = useState('matrix')
   const [filter, setFilter] = useState<BatchFilter>('all')
   const [showForm, setShowForm] = useState(false)
+
+  // Add category modal
+  const [showCategoryForm, setShowCategoryForm] = useState(false)
+  const [categoryName, setCategoryName] = useState('')
+  const [categorySaving, setCategorySaving] = useState(false)
+  const [categoryError, setCategoryError] = useState<string | null>(null)
 
   const [batches, setBatches] = useState<InventoryBatchDetail[]>([])
   const [matrixRows, setMatrixRows] = useState<MatrixRow[]>([])
   const [vendors, setVendors] = useState<VendorWithDues[]>([])
   const [categories, setCategories] = useState<Category[]>([])
   const [priceBands, setPriceBands] = useState<PriceBand[]>([])
+  const [bandsWithStock, setBandsWithStock] = useState<PriceBandWithStock[]>([])
   const [loading, setLoading] = useState(true)
 
   // Adjust qty modal
@@ -45,11 +59,13 @@ export default function InventoryPage() {
       api.get<VendorWithDues[]>('/vendors'),
       api.get<Category[]>('/categories'),
       api.get<PriceBand[]>('/price-bands'),
-    ]).then(([matrix, vends, cats, bands]) => {
+      api.get<PriceBandWithStock[]>('/price-bands/with-stock'),
+    ]).then(([matrix, vends, cats, bands, bandsStock]) => {
       setMatrixRows(matrix)
       setVendors(vends)
       setCategories(cats)
       setPriceBands(bands)
+      setBandsWithStock(bandsStock)
     }).catch(console.error).finally(() => setLoading(false))
   }, [])
 
@@ -59,6 +75,18 @@ export default function InventoryPage() {
       .then(setBatches)
       .catch(console.error)
   }, [filter])
+
+  function applyBatchStockDelta(batchId: number, newQty: number) {
+    const prevBatch = batches.find(b => b.id === batchId)
+    if (!prevBatch) return
+    const delta = newQty - prevBatch.quantityRemaining
+    if (delta === 0) return
+    setBandsWithStock(prev => prev.map(b =>
+      b.id === prevBatch.priceBandId
+        ? { ...b, totalStock: Math.max(0, b.totalStock + delta) }
+        : b,
+    ))
+  }
 
   async function handleAction(id: number, action: 'close' | 'adjust' | 'defective') {
     if (action === 'adjust') {
@@ -70,6 +98,7 @@ export default function InventoryPage() {
     }
     try {
       const updated = await api.patch<InventoryBatchDetail>(`/inventory/batches/${id}`, { action })
+      applyBatchStockDelta(id, updated.quantityRemaining)
       setBatches(prev => prev.map(b => b.id === id ? updated : b))
     } catch (err) { console.error(err) }
   }
@@ -79,10 +108,37 @@ export default function InventoryPage() {
     if (isNaN(newQty) || newQty < 0) return
     try {
       const updated = await api.patch<InventoryBatchDetail>(`/inventory/batches/${adjustId}`, { action: 'adjust', quantity: newQty })
+      applyBatchStockDelta(updated.id, updated.quantityRemaining)
       setBatches(prev => prev.map(b => b.id === adjustId ? updated : b))
       setAdjustId(null)
       setAdjustQty('')
     } catch (err) { console.error(err) }
+  }
+
+  async function handleSaveCategory(e: React.FormEvent) {
+    e.preventDefault()
+    const name = categoryName.trim()
+    if (!name) return
+    setCategorySaving(true)
+    setCategoryError(null)
+    try {
+      const created = await api.post<Category>('/categories', { name })
+      setCategories(prev => [...prev, created])
+      setCategoryName('')
+      setShowCategoryForm(false)
+    } catch (err) {
+      setCategoryError(err instanceof Error ? err.message : 'Could not create category')
+    } finally {
+      setCategorySaving(false)
+    }
+  }
+
+  async function handleAddPriceBand(categoryId: number, price: number) {
+    const created = await api.post<PriceBand>('/price-bands', { categoryId, price })
+    setPriceBands(prev => [...prev, created])
+    // Newly created bands have no stock yet — seed local copy so the ladder updates immediately
+    const categoryName = categories.find(c => c.id === categoryId)?.name ?? ''
+    setBandsWithStock(prev => [...prev, { ...created, categoryName, totalStock: 0 }])
   }
 
   async function handleSaveBatch(data: AddBatchForm) {
@@ -95,6 +151,12 @@ export default function InventoryPage() {
         notes: data.notes,
       })
       setBatches(prev => [newBatch, ...prev])
+      // Keep the Categories ladder in sync with the new stock
+      setBandsWithStock(prev => prev.map(b =>
+        b.id === data.priceBandId
+          ? { ...b, totalStock: b.totalStock + data.quantity }
+          : b,
+      ))
       setShowForm(false)
     } catch (err) { console.error(err) }
   }
@@ -105,9 +167,16 @@ export default function InventoryPage() {
         title="Inventory"
         subtitle="Price-batch stock management"
         actions={
-          <Button variant="primary" onClick={() => setShowForm(true)}>
-            Add Batch
-          </Button>
+          <div className="flex gap-2">
+            {canManageCategories && (
+              <Button variant="ghost" onClick={() => setShowCategoryForm(true)}>
+                + Category
+              </Button>
+            )}
+            <Button variant="primary" onClick={() => setShowForm(true)}>
+              Add Batch
+            </Button>
+          </div>
         }
       />
 
@@ -117,6 +186,20 @@ export default function InventoryPage() {
         loading
           ? <div className="animate-pulse rounded-xl bg-[var(--surface-raised)] h-48" />
           : <MatrixView rows={matrixRows} />
+      )}
+
+      {tab === 'categories' && (
+        loading
+          ? <div className="animate-pulse rounded-xl bg-[var(--surface-raised)] h-64" />
+          : (
+            <CategoriesView
+              categories={categories}
+              bandsWithStock={bandsWithStock}
+              canManage={canManageCategories}
+              onAddCategory={() => setShowCategoryForm(true)}
+              onAddBand={handleAddPriceBand}
+            />
+          )
       )}
 
       {tab === 'batches' && (
@@ -135,6 +218,43 @@ export default function InventoryPage() {
           onSave={handleSaveBatch}
           onCancel={() => setShowForm(false)}
         />
+      </Modal>
+
+      {/* Add category modal */}
+      <Modal
+        open={showCategoryForm}
+        onClose={() => { setShowCategoryForm(false); setCategoryError(null); setCategoryName('') }}
+        title="Add Category"
+      >
+        <form onSubmit={handleSaveCategory} className="flex flex-col gap-4">
+          <Input
+            label="Category Name"
+            placeholder="e.g. Jackets"
+            value={categoryName}
+            onChange={e => setCategoryName(e.target.value)}
+            required
+            autoFocus
+          />
+          {categoryError && (
+            <p className="text-sm" style={{ color: 'var(--danger, #DC2626)' }}>{categoryError}</p>
+          )}
+          <p className="text-xs text-[var(--text-3)]">
+            After creating a category, add price bands for it on the POS or Inventory page before adding batches.
+          </p>
+          <div className="flex gap-2 pt-1">
+            <Button
+              type="button"
+              variant="ghost"
+              fullWidth
+              onClick={() => { setShowCategoryForm(false); setCategoryError(null); setCategoryName('') }}
+            >
+              Cancel
+            </Button>
+            <Button type="submit" variant="primary" fullWidth disabled={categorySaving || !categoryName.trim()}>
+              {categorySaving ? 'Saving…' : 'Create Category'}
+            </Button>
+          </div>
+        </form>
       </Modal>
 
       {/* Adjust quantity modal */}

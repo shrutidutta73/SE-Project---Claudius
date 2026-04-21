@@ -77,28 +77,24 @@ export async function clockIn(
     validateGpsRadius(store, lat, lng)
   }
 
-  // Check not already clocked in today
-  const existing = await pool.query<{ id: number }>(
+  // Refuse a second clock-in while a shift is still open. Multiple closed
+  // shifts on the same day are fine (split shifts, breaks).
+  const open = await pool.query<{ id: number }>(
     `SELECT id FROM attendance
-     WHERE store_id = $1 AND user_id = $2 AND date = CURRENT_DATE AND check_out_at IS NULL`,
+     WHERE store_id = $1 AND user_id = $2 AND date = CURRENT_DATE AND check_out_at IS NULL
+     LIMIT 1`,
     [storeId, userId],
   )
-  if (existing.rowCount && existing.rowCount > 0) {
-    throw new AppError('Already clocked in today', 400)
+  if (open.rowCount && open.rowCount > 0) {
+    throw new AppError('You already have an open shift — clock out first.', 400)
   }
 
   const result = await pool.query<{ check_in_at: Date }>(
     `INSERT INTO attendance (store_id, user_id, date, check_in_at, check_in_lat, check_in_lng)
      VALUES ($1, $2, CURRENT_DATE, NOW(), $3, $4)
-     ON CONFLICT (store_id, user_id, date) DO NOTHING
      RETURNING check_in_at`,
     [storeId, userId, lat, lng],
   )
-
-  if (!result.rows[0]) {
-    // Conflict hit — already clocked in (race condition safety)
-    throw new AppError('Already clocked in today', 400)
-  }
 
   return { clockedIn: true, checkInAt: result.rows[0].check_in_at.toISOString() }
 }
@@ -123,10 +119,13 @@ export async function clockOut(
     validateGpsRadius(store, lat, lng)
   }
 
-  // Find today's open attendance
+  // Close the most recently opened shift. There should only be one open at a
+  // time (enforced by clockIn), but ORDER BY guards against edge cases.
   const existing = await pool.query<{ id: number }>(
     `SELECT id FROM attendance
-     WHERE store_id = $1 AND user_id = $2 AND date = CURRENT_DATE AND check_out_at IS NULL`,
+     WHERE store_id = $1 AND user_id = $2 AND date = CURRENT_DATE AND check_out_at IS NULL
+     ORDER BY check_in_at DESC
+     LIMIT 1`,
     [storeId, userId],
   )
   if (!existing.rows[0]) {
@@ -177,6 +176,9 @@ export interface RosterEntry {
 }
 
 export async function getTodayRoster(storeId: number): Promise<RosterEntry[]> {
+  // Multiple shifts per day are allowed. `open_shift` wins if the user is
+  // currently on the clock; otherwise `last_shift` carries the last shift
+  // boundaries so the UI can display "clocked out at X".
   const result = await pool.query<{
     user_id: number
     name: string
@@ -191,11 +193,20 @@ export async function getTodayRoster(storeId: number): Promise<RosterEntry[]> {
        u.name,
        u.role,
        u.is_active,
-       CASE WHEN a.check_out_at IS NULL AND a.check_in_at IS NOT NULL THEN TRUE ELSE FALSE END AS clocked_in,
-       a.check_in_at,
-       a.check_out_at
+       (open_shift.check_in_at IS NOT NULL) AS clocked_in,
+       COALESCE(open_shift.check_in_at, last_shift.check_in_at) AS check_in_at,
+       last_shift.check_out_at AS check_out_at
      FROM users u
-     LEFT JOIN attendance a ON a.user_id = u.id AND a.store_id = $1 AND a.date = CURRENT_DATE
+     LEFT JOIN LATERAL (
+       SELECT check_in_at FROM attendance
+       WHERE user_id = u.id AND store_id = $1 AND date = CURRENT_DATE AND check_out_at IS NULL
+       ORDER BY check_in_at DESC LIMIT 1
+     ) open_shift ON TRUE
+     LEFT JOIN LATERAL (
+       SELECT check_in_at, check_out_at FROM attendance
+       WHERE user_id = u.id AND store_id = $1 AND date = CURRENT_DATE
+       ORDER BY check_in_at DESC LIMIT 1
+     ) last_shift ON TRUE
      WHERE u.store_id = $1 AND u.is_active = TRUE AND u.role = 'staff'
      ORDER BY u.name`,
     [storeId],

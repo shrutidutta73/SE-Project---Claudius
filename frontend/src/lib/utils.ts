@@ -46,6 +46,28 @@ export function haversineDistanceM(
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
 }
 
+// ── WhatsApp URL ───────────────────────────────────────────────────────────────
+
+// wa.me requires full international phone numbers without '+'.
+// Vendors are commonly saved as plain 10-digit local numbers, so we prepend the
+// default country code when it's missing. '91' covers the app's primary market.
+const DEFAULT_COUNTRY_CODE = '91'
+
+export function normalizeWhatsAppPhone(raw: string | null | undefined): string | null {
+  if (!raw) return null
+  const digits = raw.replace(/\D/g, '')
+  if (digits.length === 10) return DEFAULT_COUNTRY_CODE + digits
+  if (digits.length >= 11 && digits.length <= 15) return digits
+  return null
+}
+
+export function buildWhatsAppUrl(phone: string | null | undefined, message?: string): string | null {
+  const normalized = normalizeWhatsAppPhone(phone)
+  if (!normalized) return null
+  const base = `https://wa.me/${normalized}`
+  return message ? `${base}?text=${encodeURIComponent(message)}` : base
+}
+
 // ── Margin ─────────────────────────────────────────────────────────────────────
 
 export function calcMargin(costPrice: number | null, sellingPrice: number): number | null {

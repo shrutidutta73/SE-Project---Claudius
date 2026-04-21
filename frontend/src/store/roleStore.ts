@@ -10,7 +10,9 @@ interface AuthStore {
   clockInTime:  Date | null
   login:        (user: User, token?: string) => void
   logout:       () => void
-  setClockedIn: (val: boolean) => void
+  // `at` lets callers restore clockInTime to the actual shift start after
+  // reloading the page (instead of now).
+  setClockedIn: (val: boolean, at?: Date) => void
 }
 
 export const useAuthStore = create<AuthStore>(set => ({
@@ -26,7 +28,10 @@ export const useAuthStore = create<AuthStore>(set => ({
     clearToken()
     set({ currentUser: null, clockedIn: false, clockInTime: null })
   },
-  setClockedIn: val => set({ clockedIn: val, clockInTime: val ? new Date() : null }),
+  setClockedIn: (val, at) => set({
+    clockedIn: val,
+    clockInTime: val ? (at ?? new Date()) : null,
+  }),
 }))
 
 // Pages accessible per role — ordered for nav/tabs

@@ -203,9 +203,13 @@ CREATE TABLE attendance (
   check_in_lat  DOUBLE PRECISION,
   check_in_lng  DOUBLE PRECISION,
   check_out_lat DOUBLE PRECISION,
-  check_out_lng DOUBLE PRECISION,
-  UNIQUE(store_id, user_id, date)
+  check_out_lng DOUBLE PRECISION
 );
+-- Staff may have multiple shifts per day (in/out pairs). The service layer
+-- ensures only one shift is open (check_out_at IS NULL) at a time per user.
+CREATE INDEX idx_attendance_open
+  ON attendance (store_id, user_id, date)
+  WHERE check_out_at IS NULL;
 
 -- -----------------------------------------------------------------------------
 -- gps_settings  (per-user GPS enforcement policy)

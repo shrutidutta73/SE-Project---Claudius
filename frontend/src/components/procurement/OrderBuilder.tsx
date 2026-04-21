@@ -1,7 +1,8 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import type { VendorWithDues, SuggestOrderItem, Reorder, ReorderStatus } from '../../types'
 import TabBar from '../ui/TabBar'
 import Button from '../ui/Button'
+import { formatCurrencyFull, buildWhatsAppUrl } from '../../lib/utils'
 
 interface Props {
   vendor: VendorWithDues
@@ -33,6 +34,11 @@ export default function OrderBuilder({ vendor, suggestions, reorder, onSend, onC
   )
   const [qtys, setQtys] = useState<Record<number, number>>(initialQtys)
 
+  // Re-seed qtys when suggestions arrive after an initial render with empty list
+  useEffect(() => {
+    setQtys(initialQtys)
+  }, [initialQtys])
+
   const currentStatus: ReorderStatus = reorder?.status ?? 'draft'
 
   const setQty = (bandId: number, val: number) => {
@@ -43,19 +49,49 @@ export default function OrderBuilder({ vendor, suggestions, reorder, onSend, onC
     setQtys(Object.fromEntries(suggestions.map((s) => [s.priceBandId, s.suggestedQty])))
   }
 
+  const clearAll = () => {
+    setQtys(Object.fromEntries(suggestions.map((s) => [s.priceBandId, 0])))
+  }
+
   const messageItems = suggestions.map((s) => ({
     categoryName: s.categoryName,
     bandPrice: s.bandPrice,
     finalQty: qtys[s.priceBandId] ?? 0,
   }))
 
-  const previewMessage = buildMessage(vendor.name, messageItems)
+  const totalQty = messageItems.reduce((a, b) => a + b.finalQty, 0)
+  const totalCost = messageItems.reduce((a, b) => a + b.finalQty * b.bandPrice, 0)
+  const hasAnyQty = totalQty > 0
+
+  const previewMessage = hasAnyQty ? buildMessage(vendor.name, messageItems) : ''
+
+  const waUrl = buildWhatsAppUrl(vendor.phone, previewMessage)
 
   const handleSendWhatsApp = () => {
-    const phone = vendor.phone?.replace(/\D/g, '') ?? ''
-    const encoded = encodeURIComponent(previewMessage)
-    window.open(`https://wa.me/${phone}?text=${encoded}`, '_blank')
+    if (!hasAnyQty) return
+    if (waUrl) window.open(waUrl, '_blank', 'noopener,noreferrer')
     onSend(suggestions.map((s) => ({ priceBandId: s.priceBandId, finalQty: qtys[s.priceBandId] ?? 0 })))
+  }
+
+  // Empty state — no batches from this vendor yet
+  if (suggestions.length === 0) {
+    return (
+      <div className="flex flex-col gap-4">
+        <div
+          className="rounded-xl p-4 text-sm text-[var(--text-2)] border"
+          style={{ background: 'var(--surface-raised)', borderColor: 'var(--border)' }}
+        >
+          <p className="font-semibold text-[var(--text-1)] mb-1">Nothing to suggest yet</p>
+          <p>
+            This vendor hasn&apos;t supplied any inventory batches, so we can&apos;t compute a suggested
+            order. Add a batch from {vendor.name} in the Inventory page first, then come back here.
+          </p>
+        </div>
+        <Button variant="ghost" fullWidth onClick={onClose}>
+          Close
+        </Button>
+      </div>
+    )
   }
 
   return (
@@ -67,8 +103,11 @@ export default function OrderBuilder({ vendor, suggestions, reorder, onSend, onC
         onChange={() => {/* read-only status indicator */}}
       />
 
-      {/* Suggest qty button */}
-      <div className="flex justify-end">
+      {/* Quick actions */}
+      <div className="flex justify-end gap-2">
+        <Button variant="ghost" size="sm" onClick={clearAll}>
+          Clear
+        </Button>
         <Button variant="ghost" size="sm" onClick={fillSuggested}>
           Suggest Qty
         </Button>
@@ -94,7 +133,7 @@ export default function OrderBuilder({ vendor, suggestions, reorder, onSend, onC
               <tr key={s.priceBandId} className="border-b border-[var(--border)] last:border-0">
                 <td className="px-2 py-2.5 font-medium text-[var(--text-1)]">{s.categoryName}</td>
                 <td className="px-2 py-2.5 tabular-nums">₹{s.bandPrice}</td>
-                <td className="px-2 py-2.5 tabular-nums text-[var(--text-3)]">{s.dailyAvg}/day</td>
+                <td className="px-2 py-2.5 tabular-nums text-[var(--text-3)]">{s.dailyAvg.toFixed(1)}/day</td>
                 <td className="px-2 py-2.5 tabular-nums">{s.currentStock}</td>
                 <td className="px-2 py-2.5 tabular-nums text-[var(--primary)] font-semibold">{s.suggestedQty}</td>
                 <td className="px-2 py-2.5">
@@ -112,30 +151,49 @@ export default function OrderBuilder({ vendor, suggestions, reorder, onSend, onC
         </table>
       </div>
 
-      {/* Message preview */}
-      <div
-        className="rounded-xl p-3 text-sm text-[var(--text-2)] border"
-        style={{ background: 'var(--surface-raised)', borderColor: 'var(--border)' }}
-      >
-        <p className="text-[10px] font-semibold uppercase tracking-wide text-[var(--text-3)] mb-1">
-          Message Preview
-        </p>
-        <p className="leading-relaxed">{previewMessage}</p>
+      {/* Totals */}
+      <div className="flex items-center justify-between text-sm">
+        <span className="text-[var(--text-3)]">
+          {totalQty} item{totalQty === 1 ? '' : 's'}
+        </span>
+        <span className="font-semibold tabular-nums text-[var(--text-1)]">
+          Est. total {formatCurrencyFull(totalCost)}
+        </span>
       </div>
+
+      {/* Message preview */}
+      {hasAnyQty && (
+        <div
+          className="rounded-xl p-3 text-sm text-[var(--text-2)] border"
+          style={{ background: 'var(--surface-raised)', borderColor: 'var(--border)' }}
+        >
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-[var(--text-3)] mb-1">
+            Message Preview
+          </p>
+          <p className="leading-relaxed">{previewMessage}</p>
+        </div>
+      )}
 
       {/* Action buttons */}
       <div className="flex flex-col gap-2 pt-1">
-        <Button variant="primary" fullWidth onClick={handleSendWhatsApp}>
-          Send to WhatsApp
+        {hasAnyQty && !waUrl && (
+          <p className="text-xs" style={{ color: 'var(--warning)' }}>
+            {vendor.phone
+              ? `"${vendor.phone}" isn't a valid WhatsApp number — the order will still be saved, but no message will open.`
+              : 'No phone on file — the order will be saved, but no WhatsApp message will open. Edit the vendor to add a phone.'}
+          </p>
+        )}
+        <Button
+          variant="primary"
+          fullWidth
+          disabled={!hasAnyQty}
+          onClick={handleSendWhatsApp}
+        >
+          {waUrl ? 'Send to WhatsApp' : 'Save order'}
         </Button>
-        <div className="flex gap-2">
-          <Button variant="ghost" fullWidth onClick={() => console.log('record payment')}>
-            Record Payment
-          </Button>
-          <Button variant="ghost" fullWidth onClick={() => console.log('download outstanding')}>
-            Download Outstanding
-          </Button>
-        </div>
+        <Button variant="ghost" fullWidth onClick={onClose}>
+          Cancel
+        </Button>
       </div>
     </div>
   )
