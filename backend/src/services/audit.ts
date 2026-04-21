@@ -65,14 +65,32 @@ export async function wipeEphemeralData(
   try {
     await client.query('BEGIN')
 
-    // Count records to be pruned
-    const countResult = await client.query<{ count: string }>(
-      `SELECT COUNT(*) AS count
-       FROM sales
+    // Snapshot the sale IDs we're about to wipe — we also need to remove
+    // their dependent returns / return_items, which have ON DELETE RESTRICT
+    // to sales. Without this pre-delete the sales DELETE fails with 23503
+    // ("foreign key violation") the moment any one sale has a return row.
+    const victims = await client.query<{ id: number }>(
+      `SELECT id FROM sales
        WHERE store_id = $1 AND (is_ephemeral = TRUE OR expires_at < NOW())`,
       [storeId],
     )
-    const recordsPruned = parseInt(countResult.rows[0].count, 10)
+    const recordsPruned = victims.rowCount ?? 0
+    const saleIds = victims.rows.map(r => r.id)
+
+    if (saleIds.length > 0) {
+      // return_items cascades from returns via ON DELETE CASCADE, but we do
+      // it explicitly because return_items.sale_item_id → sale_items is
+      // RESTRICT and the sale_items rows vanish with their parent sale.
+      await client.query(
+        `DELETE FROM return_items
+         WHERE return_id IN (SELECT id FROM returns WHERE sale_id = ANY($1::int[]))`,
+        [saleIds],
+      )
+      await client.query(
+        `DELETE FROM returns WHERE sale_id = ANY($1::int[])`,
+        [saleIds],
+      )
+    }
 
     // Delete ephemeral / expired sales (cascades to sale_items via FK)
     await client.query(
