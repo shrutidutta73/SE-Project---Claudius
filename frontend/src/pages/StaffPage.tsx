@@ -245,18 +245,29 @@ function StaffDashboard({ store }: StaffDashboardProps) {
 
   const [revenueToday, setRevenueToday] = useState(0)
   const [salesCount,   setSalesCount]   = useState(0)
+  const [clockError,   setClockError]   = useState<string | null>(null)
+  const [clockBusy,    setClockBusy]    = useState(false)
 
+  // Restore today's clock-in state from the server so a page reload (or a
+  // fresh login) doesn't reset the button to "Clock In" when the user is
+  // actually still on the clock. Multiple shifts per day are allowed, so we
+  // trust the server's `clockedIn` flag, which reflects whether any open
+  // shift exists today.
   useEffect(() => {
     api.get<StaffLeaderboardEntry[]>('/staff/leaderboard')
       .then(entries => {
         const entry = entries.find(e => e.userId === currentUser.id)
-        if (entry) {
-          setRevenueToday(entry.revenueToday)
-          setSalesCount(entry.salesCountToday)
+        if (!entry) return
+        setRevenueToday(entry.revenueToday)
+        setSalesCount(entry.salesCountToday)
+        if (entry.clockedIn && entry.checkInAt) {
+          setClockedIn(true, new Date(entry.checkInAt))
+        } else {
+          setClockedIn(false)
         }
       })
       .catch(() => {/* ignore */})
-  }, [currentUser.id])
+  }, [currentUser.id, setClockedIn])
 
   // Fallback store used only if parent hasn't loaded yet
   const effectiveStore: Store = store ?? {
@@ -274,43 +285,98 @@ function StaffDashboard({ store }: StaffDashboardProps) {
     updatedAt: '',
   }
 
-  async function handleClock(action: 'in' | 'out') {
-    if (!navigator.geolocation) {
-      // No geolocation — call with zeros
-      try {
-        if (action === 'in') {
-          await api.post('/attendance/clock-in', { lat: 0, lng: 0 })
+  function friendlyClockError(err: unknown): string {
+    const raw = err instanceof Error ? err.message : String(err)
+    if (/radius|outside/i.test(raw))   return "You're outside the store's GPS radius. Move closer and try again."
+    if (/already clocked/i.test(raw))  return "You're already clocked in today."
+    if (/not clocked/i.test(raw))      return "You aren't currently clocked in."
+    if (/token|unauth/i.test(raw))     return 'Your session expired. Log in again.'
+    return raw || 'Could not update attendance. Try again.'
+  }
+
+  // Browser geolocation wrapped in a promise so we can await it.
+  // Rejects on denial / timeout / no geolocation support.
+  //
+  // Two-stage strategy: try network/WiFi positioning first (fast, works on
+  // desktop without GPS hardware and on mobile indoors), then fall back to
+  // high-accuracy GPS with a longer timeout. enableHighAccuracy=true forces
+  // the OS GPS chip, which times out on most desktops where no GPS exists.
+  function getCoords(): Promise<{ lat: number; lng: number }> {
+    return new Promise((resolve, reject) => {
+      if (!navigator.geolocation) {
+        reject(new Error('This device does not support GPS.'))
+        return
+      }
+
+      const onFinal = (err: GeolocationPositionError) => {
+        if (err.code === err.PERMISSION_DENIED) {
+          reject(new Error('Location permission was denied.'))
+        } else if (err.code === err.POSITION_UNAVAILABLE) {
+          reject(new Error("Your device couldn't determine its location. Check that location services are turned on for the OS and browser."))
+        } else if (err.code === err.TIMEOUT) {
+          reject(new Error('Location request took too long. Try again — sometimes the first attempt is slow.'))
         } else {
-          await api.post('/attendance/clock-out', { lat: 0, lng: 0 })
+          reject(new Error('Could not read GPS.'))
         }
-      } catch {/* ignore */}
-      setClockedIn(action === 'in')
-      return
+      }
+
+      navigator.geolocation.getCurrentPosition(
+        pos => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+        // First-stage failure: retry with high-accuracy if it wasn't a permission issue.
+        err => {
+          if (err.code === err.PERMISSION_DENIED) {
+            reject(new Error('Location permission was denied.'))
+            return
+          }
+          navigator.geolocation.getCurrentPosition(
+            pos => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+            onFinal,
+            { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 },
+          )
+        },
+        // Fast first pass: coarse accuracy, accept cached position up to 1 min old.
+        { enableHighAccuracy: false, timeout: 8000, maximumAge: 60000 },
+      )
+    })
+  }
+
+  async function handleClock(action: 'in' | 'out') {
+    if (clockBusy) return
+    setClockError(null)
+    setClockBusy(true)
+
+    const gpsRequired = action === 'in'
+      ? gpsPolicy.requireOnClockIn
+      : gpsPolicy.requireOnClockOut
+
+    // When the store hasn't enabled GPS enforcement for this action, don't
+    // even touch navigator.geolocation — no browser permission prompt, no
+    // 10-second wait for a fix. The backend skips validation too.
+    let coords: { lat: number; lng: number } = { lat: 0, lng: 0 }
+    if (gpsRequired) {
+      try {
+        coords = await getCoords()
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Could not read GPS.'
+        setClockError(`${msg} GPS is required to clock ${action} — please enable location and try again.`)
+        setClockBusy(false)
+        return
+      }
     }
-    navigator.geolocation.getCurrentPosition(
-      async pos => {
-        const { latitude: lat, longitude: lng } = pos.coords
-        try {
-          if (action === 'in') {
-            await api.post('/attendance/clock-in', { lat, lng })
-          } else {
-            await api.post('/attendance/clock-out', { lat, lng })
-          }
-        } catch {/* ignore */}
-        setClockedIn(action === 'in')
-      },
-      async () => {
-        // Position error — fall back to zeros
-        try {
-          if (action === 'in') {
-            await api.post('/attendance/clock-in', { lat: 0, lng: 0 })
-          } else {
-            await api.post('/attendance/clock-out', { lat: 0, lng: 0 })
-          }
-        } catch {/* ignore */}
-        setClockedIn(action === 'in')
-      },
-    )
+
+    try {
+      if (action === 'in') {
+        await api.post('/attendance/clock-in', coords)
+      } else {
+        await api.post('/attendance/clock-out', coords)
+      }
+      // Only flip local state after the server actually accepted the change.
+      setClockedIn(action === 'in')
+    } catch (err) {
+      setClockError(friendlyClockError(err))
+    } finally {
+      setClockBusy(false)
+    }
   }
 
   return (
@@ -323,8 +389,34 @@ function StaffDashboard({ store }: StaffDashboardProps) {
           store={effectiveStore}
           clockedIn={clockedIn}
           gpsPolicy={gpsPolicy}
+          busy={clockBusy}
           onClock={handleClock}
         />
+
+        {/* Clock error (permission denied, outside radius, session expired, ...) */}
+        {clockError && (
+          <div
+            className="card p-3 flex items-start gap-2.5 animate-slide-up"
+            role="alert"
+            style={{ background: 'var(--danger-bg)', borderColor: 'var(--danger-border)' }}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--danger)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="flex-shrink-0 mt-0.5">
+              <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+            </svg>
+            <p className="text-sm font-medium leading-relaxed flex-1" style={{ color: 'var(--danger)' }}>
+              {clockError}
+            </p>
+            <button
+              type="button"
+              onClick={() => setClockError(null)}
+              className="text-xs font-semibold flex-shrink-0"
+              style={{ color: 'var(--danger)' }}
+              aria-label="Dismiss error"
+            >
+              ✕
+            </button>
+          </div>
+        )}
 
         {/* Active shift panel */}
         {clockedIn && (
@@ -406,6 +498,32 @@ export default function StaffPage() {
   // Inline API error + submitting state for the Add / Edit modals
   const [formError,     setFormError]     = useState<string | null>(null)
   const [formSubmitting, setFormSubmitting] = useState(false)
+
+  // Error feedback for the GPS enforcement toggles
+  const [gpsError, setGpsError] = useState<string | null>(null)
+
+  // Persist GPS enforcement flags; reverts the optimistic toggle if the
+  // server refuses (e.g. 403 or network error). `prev` is the state before
+  // the optimistic update so we know what to roll back to.
+  async function saveGpsEnforcement(
+    next: { clockIn: boolean; clockOut: boolean },
+    prev: { clockIn: boolean; clockOut: boolean },
+  ) {
+    const s = store ?? effectiveStore
+    setGpsError(null)
+    try {
+      await api.patch('/store/gps-settings', {
+        gpsLatitude: s.gpsLatitude,
+        gpsLongitude: s.gpsLongitude,
+        gpsRadiusM: s.gpsRadiusM,
+        gpsRequireClockIn: next.clockIn,
+        gpsRequireClockOut: next.clockOut,
+      })
+    } catch (err) {
+      setGlobal({ clockIn: prev.clockIn, clockOut: prev.clockOut })
+      setGpsError(friendlyError(err))
+    }
+  }
 
   function openAddModal() {
     setFormError(null)
@@ -722,12 +840,9 @@ export default function StaffPage() {
               description="Staff must be within store radius to clock in"
               active={globalClockIn}
               onChange={v => {
+                const prev = { clockIn: globalClockIn, clockOut: globalClockOut }
                 setGlobal({ clockIn: v })
-                const s = store ?? effectiveStore
-                api.patch('/store/gps-settings', {
-                  gpsLatitude: s.gpsLatitude, gpsLongitude: s.gpsLongitude, gpsRadiusM: s.gpsRadiusM,
-                  gpsRequireClockIn: v, gpsRequireClockOut: globalClockOut,
-                }).catch(() => {})
+                saveGpsEnforcement({ clockIn: v, clockOut: globalClockOut }, prev)
               }}
             />
             <div style={{ height: 1, background: 'var(--border)' }} />
@@ -736,14 +851,19 @@ export default function StaffPage() {
               description="Staff must be within store radius to clock out"
               active={globalClockOut}
               onChange={v => {
+                const prev = { clockIn: globalClockIn, clockOut: globalClockOut }
                 setGlobal({ clockOut: v })
-                const s = store ?? effectiveStore
-                api.patch('/store/gps-settings', {
-                  gpsLatitude: s.gpsLatitude, gpsLongitude: s.gpsLongitude, gpsRadiusM: s.gpsRadiusM,
-                  gpsRequireClockIn: globalClockIn, gpsRequireClockOut: v,
-                }).catch(() => {})
+                saveGpsEnforcement({ clockIn: globalClockIn, clockOut: v }, prev)
               }}
             />
+            {gpsError && (
+              <p
+                className="text-xs rounded-md px-3 py-2 mt-1"
+                style={{ color: 'var(--danger)', background: 'var(--danger-bg)', border: '1px solid var(--danger-border)' }}
+              >
+                {gpsError}
+              </p>
+            )}
           </div>
 
           {/* Stats */}

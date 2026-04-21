@@ -8,10 +8,11 @@ interface Props {
   store:      Store
   clockedIn:  boolean
   gpsPolicy?: GpsPolicy
+  busy?:      boolean
   onClock:    (action: 'in' | 'out') => void
 }
 
-export default function ClockWidget({ user, store, clockedIn, gpsPolicy, onClock }: Props) {
+export default function ClockWidget({ user, store, clockedIn, gpsPolicy, busy, onClock }: Props) {
   const [distanceM, setDistanceM] = useState<number | null>(null)
   const [time, setTime] = useState(new Date())
 
@@ -21,15 +22,19 @@ export default function ClockWidget({ user, store, clockedIn, gpsPolicy, onClock
   }, [])
 
   const gpsConfigured = store.gpsLatitude !== 0 || store.gpsLongitude !== 0
+  const gpsEnforced = (gpsPolicy?.requireOnClockIn ?? false) || (gpsPolicy?.requireOnClockOut ?? false)
 
   useEffect(() => {
-    if (!gpsConfigured) { setDistanceM(null); return }
+    // Only request the location when the store has GPS configured AND at
+    // least one clock action enforces it. Otherwise we'd trigger a browser
+    // permission prompt for a check whose result nobody uses.
+    if (!gpsConfigured || !gpsEnforced) { setDistanceM(null); return }
     if (!navigator.geolocation) { setDistanceM(0); return }
     navigator.geolocation.getCurrentPosition(
       pos => setDistanceM(Math.round(haversineDistanceM(pos.coords.latitude, pos.coords.longitude, store.gpsLatitude, store.gpsLongitude))),
       () => setDistanceM(0),
     )
-  }, [store.gpsLatitude, store.gpsLongitude, gpsConfigured])
+  }, [store.gpsLatitude, store.gpsLongitude, gpsConfigured, gpsEnforced])
 
   const inRange = !gpsConfigured || (distanceM !== null && distanceM <= store.gpsRadiusM)
 
@@ -117,8 +122,8 @@ export default function ClockWidget({ user, store, clockedIn, gpsPolicy, onClock
       {/* Action */}
       <div className="flex flex-col gap-2.5">
         <button
-          onClick={() => !gpsBlocked && onClock(clockedIn ? 'out' : 'in')}
-          disabled={gpsBlocked}
+          onClick={() => !gpsBlocked && !busy && onClock(clockedIn ? 'out' : 'in')}
+          disabled={gpsBlocked || busy}
           style={{
             width: '100%',
             padding: '0.875rem',
@@ -127,15 +132,15 @@ export default function ClockWidget({ user, store, clockedIn, gpsPolicy, onClock
             fontWeight: 700,
             letterSpacing: '-0.01em',
             border: clockedIn ? '1.5px solid var(--border-strong)' : 'none',
-            cursor: gpsBlocked ? 'not-allowed' : 'pointer',
-            background: gpsBlocked ? 'var(--border)' : clockedIn ? 'var(--surface)' : 'var(--primary)',
-            color: gpsBlocked ? 'var(--text-4)' : clockedIn ? 'var(--danger)' : '#fff',
-            boxShadow: (!gpsBlocked && !clockedIn) ? '0 2px 8px rgba(79,70,229,0.25)' : 'none',
+            cursor: (gpsBlocked || busy) ? 'not-allowed' : 'pointer',
+            background: (gpsBlocked || busy) ? 'var(--border)' : clockedIn ? 'var(--surface)' : 'var(--primary)',
+            color: (gpsBlocked || busy) ? 'var(--text-4)' : clockedIn ? 'var(--danger)' : '#fff',
+            boxShadow: (!gpsBlocked && !busy && !clockedIn) ? '0 2px 8px rgba(79,70,229,0.25)' : 'none',
             transition: 'all 0.15s ease',
-            opacity: gpsBlocked ? 0.7 : 1,
+            opacity: (gpsBlocked || busy) ? 0.7 : 1,
           }}
         >
-          {clockedIn ? 'Clock Out' : 'Clock In'}
+          {busy ? 'Checking location…' : clockedIn ? 'Clock Out' : 'Clock In'}
         </button>
 
         {gpsBlocked && (
