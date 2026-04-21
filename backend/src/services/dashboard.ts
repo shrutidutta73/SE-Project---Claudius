@@ -36,12 +36,15 @@ interface DailySummaryRow {
 
 export async function getSummary(storeId: number) {
   const [totalsResult, topBandResult, agingResult, vendorsResult] = await Promise.all([
+    // Totals come from sale_items so both price-band sales and custom-priced
+    // sales are counted. daily_sales_summary only carries band rows.
     pool.query<WeeklyTotalsRow>(
       `SELECT
-        COALESCE(SUM(total_revenue), 0)::FLOAT AS total_revenue,
-        COALESCE(SUM(total_qty_sold), 0)::INT AS units_sold
-      FROM daily_sales_summary
-      WHERE store_id = $1 AND date >= CURRENT_DATE - INTERVAL '6 days'`,
+        COALESCE(SUM(si.subtotal), 0)::FLOAT AS total_revenue,
+        COALESCE(SUM(si.quantity), 0)::INT   AS units_sold
+       FROM sale_items si
+       JOIN sales s ON s.id = si.sale_id
+       WHERE s.store_id = $1 AND s.created_at >= CURRENT_DATE - INTERVAL '6 days'`,
       [storeId],
     ),
     pool.query<TopBandRow>(
@@ -93,11 +96,32 @@ export async function getDailySummary(storeId: number, range: 'weekly' | 'monthl
 
   const days = range === 'weekly' ? 6 : 29
 
+  // Per-band rows come from daily_sales_summary; custom-priced sales are
+  // aggregated separately from sale_items (one synthetic row per day with
+  // priceBandId=0, bandPrice=0 so the frontend can distinguish them).
   const result = await pool.query<DailySummaryRow>(
     `SELECT id, store_id, date, price_band_id, category_name, band_price,
-      total_qty_sold, total_revenue, total_returns, total_refunds
+           total_qty_sold, total_revenue, total_returns, total_refunds
     FROM daily_sales_summary
     WHERE store_id = $1 AND date >= CURRENT_DATE - ($2 || ' days')::INTERVAL
+    UNION ALL
+    SELECT
+      0 AS id,
+      s.store_id,
+      DATE(s.created_at) AS date,
+      0 AS price_band_id,
+      'Custom' AS category_name,
+      0 AS band_price,
+      SUM(si.quantity)::INT AS total_qty_sold,
+      SUM(si.subtotal) AS total_revenue,
+      0 AS total_returns,
+      0 AS total_refunds
+    FROM sale_items si
+    JOIN sales s ON s.id = si.sale_id
+    WHERE s.store_id = $1
+      AND s.created_at >= CURRENT_DATE - ($2 || ' days')::INTERVAL
+      AND si.price_band_id IS NULL
+    GROUP BY s.store_id, DATE(s.created_at)
     ORDER BY date ASC, category_name, band_price`,
     [storeId, days],
   )
