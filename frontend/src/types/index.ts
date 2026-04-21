@@ -194,6 +194,7 @@ export const StaffLeaderboardEntrySchema = z.object({
   isActive: z.boolean(),
   clockedIn: z.boolean(),
   checkInAt: z.string().nullable(),
+  checkOutAt: z.string().nullable().optional(),
   revenueToday: z.number(),
   salesCountToday: z.number(),
 })
