@@ -6,6 +6,8 @@ import PageHeader from '../components/ui/PageHeader'
 import TabBar from '../components/ui/TabBar'
 import Modal from '../components/ui/Modal'
 import Button from '../components/ui/Button'
+import Input from '../components/ui/Input'
+import { useAuthStore } from '../store/roleStore'
 import FilterPills from '../components/inventory/FilterPills'
 import MatrixView from '../components/inventory/MatrixView'
 import BatchList from '../components/inventory/BatchList'
@@ -17,9 +19,18 @@ const TABS = [
 ]
 
 export default function InventoryPage() {
+  const role = useAuthStore(s => s.currentUser?.role ?? 'staff')
+  const canManageCategories = role === 'owner' || role === 'manager'
+
   const [tab, setTab] = useState('matrix')
   const [filter, setFilter] = useState<BatchFilter>('all')
   const [showForm, setShowForm] = useState(false)
+
+  // Add category modal
+  const [showCategoryForm, setShowCategoryForm] = useState(false)
+  const [categoryName, setCategoryName] = useState('')
+  const [categorySaving, setCategorySaving] = useState(false)
+  const [categoryError, setCategoryError] = useState<string | null>(null)
 
   const [batches, setBatches] = useState<InventoryBatchDetail[]>([])
   const [matrixRows, setMatrixRows] = useState<MatrixRow[]>([])
@@ -85,6 +96,24 @@ export default function InventoryPage() {
     } catch (err) { console.error(err) }
   }
 
+  async function handleSaveCategory(e: React.FormEvent) {
+    e.preventDefault()
+    const name = categoryName.trim()
+    if (!name) return
+    setCategorySaving(true)
+    setCategoryError(null)
+    try {
+      const created = await api.post<Category>('/categories', { name })
+      setCategories(prev => [...prev, created])
+      setCategoryName('')
+      setShowCategoryForm(false)
+    } catch (err) {
+      setCategoryError(err instanceof Error ? err.message : 'Could not create category')
+    } finally {
+      setCategorySaving(false)
+    }
+  }
+
   async function handleSaveBatch(data: AddBatchForm) {
     try {
       const newBatch = await api.post<InventoryBatchDetail>('/inventory/batches', {
@@ -105,9 +134,16 @@ export default function InventoryPage() {
         title="Inventory"
         subtitle="Price-batch stock management"
         actions={
-          <Button variant="primary" onClick={() => setShowForm(true)}>
-            Add Batch
-          </Button>
+          <div className="flex gap-2">
+            {canManageCategories && (
+              <Button variant="ghost" onClick={() => setShowCategoryForm(true)}>
+                + Category
+              </Button>
+            )}
+            <Button variant="primary" onClick={() => setShowForm(true)}>
+              Add Batch
+            </Button>
+          </div>
         }
       />
 
@@ -135,6 +171,43 @@ export default function InventoryPage() {
           onSave={handleSaveBatch}
           onCancel={() => setShowForm(false)}
         />
+      </Modal>
+
+      {/* Add category modal */}
+      <Modal
+        open={showCategoryForm}
+        onClose={() => { setShowCategoryForm(false); setCategoryError(null); setCategoryName('') }}
+        title="Add Category"
+      >
+        <form onSubmit={handleSaveCategory} className="flex flex-col gap-4">
+          <Input
+            label="Category Name"
+            placeholder="e.g. Jackets"
+            value={categoryName}
+            onChange={e => setCategoryName(e.target.value)}
+            required
+            autoFocus
+          />
+          {categoryError && (
+            <p className="text-sm" style={{ color: 'var(--danger, #DC2626)' }}>{categoryError}</p>
+          )}
+          <p className="text-xs text-[var(--text-3)]">
+            After creating a category, add price bands for it on the POS or Inventory page before adding batches.
+          </p>
+          <div className="flex gap-2 pt-1">
+            <Button
+              type="button"
+              variant="ghost"
+              fullWidth
+              onClick={() => { setShowCategoryForm(false); setCategoryError(null); setCategoryName('') }}
+            >
+              Cancel
+            </Button>
+            <Button type="submit" variant="primary" fullWidth disabled={categorySaving || !categoryName.trim()}>
+              {categorySaving ? 'Saving…' : 'Create Category'}
+            </Button>
+          </div>
+        </form>
       </Modal>
 
       {/* Adjust quantity modal */}
