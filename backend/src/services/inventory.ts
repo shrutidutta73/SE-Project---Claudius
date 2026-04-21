@@ -244,7 +244,10 @@ export async function getMatrix(storeId: number): Promise<MatrixRow[]> {
         bands: {},
       })
     }
-    map.get(categoryId)!.bands[String(row.price)] = row.total_stock as number
+    // pg returns NUMERIC as a string ("299.00"); the matrix view keys by
+    // canonical integer-ish price so the frontend lookup matches.
+    const priceKey = String(Number(row.price))
+    map.get(categoryId)!.bands[priceKey] = row.total_stock as number
   }
 
   return [...map.values()]
