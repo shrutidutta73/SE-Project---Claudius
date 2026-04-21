@@ -47,6 +47,7 @@ export default function SettingsPage() {
 
   const [billingMode, setBillingMode]       = useState<BillingMode>('ephemeral')
   const [retentionDays, setRetentionDays]   = useState<number>(14)
+  const [backdate, setBackdate]             = useState(false)
   const [saved, setSaved]                   = useState(false)
   const [toast, setToast]                   = useState<string | null>(null)
 
@@ -114,14 +115,22 @@ export default function SettingsPage() {
 
   async function handleSave() {
     try {
-      await api.patch('/store/billing-mode', { billingMode })
-      if (billingMode === 'ephemeral') {
-        await api.patch('/store/retention', { retentionDays })
-      }
+      // Single atomic PATCH — billingMode, retentionDays (for ephemeral),
+      // and backdate all apply in one transaction on the server.
+      await api.patch('/store/billing-mode', {
+        billingMode,
+        retentionDays: billingMode === 'ephemeral' ? retentionDays : undefined,
+        backdate,
+      })
       setSaved(true)
-      showToast('Settings saved successfully.')
+      showToast(
+        backdate
+          ? 'Settings saved. Existing sales updated to match the new mode.'
+          : 'Settings saved successfully.',
+      )
+      setBackdate(false)
       setTimeout(() => setSaved(false), 2000)
-    } catch (err) { showToast('Failed to save settings.') }
+    } catch (err) { showToast(err instanceof Error ? err.message : 'Failed to save settings.') }
   }
 
   async function handleWipe(password: string) {
@@ -375,6 +384,32 @@ export default function SettingsPage() {
               </p>
             </div>
             <BillingModeToggle mode={billingMode} onChange={setBillingMode} />
+
+            {/* Backdate toggle — opt-in retroactive apply to historical sales */}
+            <label
+              className="flex items-start gap-2.5 px-3 py-2.5 rounded-lg cursor-pointer transition-colors"
+              style={{
+                background: backdate ? 'var(--warning-bg)' : 'var(--surface-raised)',
+                border: `1px solid ${backdate ? 'var(--warning-border)' : 'var(--border)'}`,
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={backdate}
+                onChange={e => setBackdate(e.target.checked)}
+                style={{ marginTop: 2, accentColor: 'var(--warning)' }}
+              />
+              <div className="flex-1 text-xs leading-relaxed">
+                <p className="font-semibold" style={{ color: backdate ? 'var(--warning)' : 'var(--text-2)' }}>
+                  Apply to existing records too
+                </p>
+                <p style={{ color: 'var(--text-3)' }} className="mt-0.5">
+                  {billingMode === 'ephemeral'
+                    ? 'All past sales will be marked ephemeral and given an expiry of sale date + retention. Eligible for the next data wipe.'
+                    : 'All past sales will be marked structured and lose their expiry. Future wipes won’t touch them.'}
+                </p>
+              </div>
+            </label>
           </div>
 
           {/* Retention Slider — only for ephemeral */}

@@ -27,6 +27,14 @@ const UpdateStoreSchema = z.object({
 
 const UpdateBillingModeSchema = z.object({
   billingMode: z.enum(['structured', 'ephemeral']),
+  // Optional: pass a retention window along with the mode change so the
+  // backend can apply both atomically (esp. when backdate=true needs to
+  // compute expires_at for ephemeral).
+  retentionDays: z.union([z.literal(7), z.literal(14), z.literal(30), z.literal(90)]).optional(),
+  // When true, existing sales are rewritten to match the new mode.
+  // Ephemeral: is_ephemeral=TRUE + expires_at = created_at + retention.
+  // Structured: is_ephemeral=FALSE + expires_at=NULL.
+  backdate: z.boolean().optional().default(false),
 })
 
 const UpdateRetentionSchema = z.object({
@@ -69,8 +77,11 @@ router.patch(
   authenticate,
   authorize('owner'),
   asyncHandler(async (req, res) => {
-    const { billingMode } = UpdateBillingModeSchema.parse(req.body)
-    const store = await updateBillingMode(req.user.storeId, billingMode)
+    const body = UpdateBillingModeSchema.parse(req.body)
+    const store = await updateBillingMode(req.user.storeId, body.billingMode, {
+      retentionDays: body.retentionDays,
+      backdate: body.backdate,
+    })
     res.json(store)
   }),
 )
