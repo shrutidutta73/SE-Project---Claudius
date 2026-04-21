@@ -6,9 +6,14 @@ import type { PaymentMethod } from '../../types'
 
 interface Props {
   showCustomer: boolean
+  // Parent-supplied handler so the POS page can refresh stock after the sale
+  // lands. Returns true only when the sale was accepted by the server.
+  onCheckout: (method: PaymentMethod) => Promise<boolean>
+  checkingOut?: boolean
+  checkoutError?: string | null
 }
 
-export default function CartDrawer({ showCustomer }: Props) {
+export default function CartDrawer({ showCustomer, onCheckout, checkingOut, checkoutError }: Props) {
   const [open, setOpen] = useState(false)
   const [successMethod, setSuccessMethod] = useState<PaymentMethod | null>(null)
   const items        = useCartStore(s => s.items)
@@ -17,13 +22,13 @@ export default function CartDrawer({ showCustomer }: Props) {
   const customerName = useCartStore(s => s.customerName)
   const customerPhone= useCartStore(s => s.customerPhone)
   const setCustomer  = useCartStore(s => s.setCustomer)
-  const checkout     = useCartStore(s => s.checkout)
 
   const itemCount   = items.reduce((sum, i) => sum + i.quantity, 0)
   const totalAmount = total()
 
-  function handleCheckout(method: PaymentMethod) {
-    checkout(method)
+  async function handleCheckout(method: PaymentMethod) {
+    const ok = await onCheckout(method)
+    if (!ok) return
     setSuccessMethod(method)
     setTimeout(() => { setSuccessMethod(null); setOpen(false) }, 1500)
   }
@@ -93,15 +98,23 @@ export default function CartDrawer({ showCustomer }: Props) {
             )}
 
             <div className="flex flex-col gap-2">
-              <button onClick={() => handleCheckout('cash')} disabled={itemCount === 0} className="btn btn-primary w-full py-3.5 text-base font-bold">
-                Cash · ₹{totalAmount.toLocaleString('en-IN')}
+              <button onClick={() => handleCheckout('cash')} disabled={itemCount === 0 || checkingOut} className="btn btn-primary w-full py-3.5 text-base font-bold">
+                {checkingOut ? 'Processing…' : `Cash · ₹${totalAmount.toLocaleString('en-IN')}`}
               </button>
-              <button onClick={() => handleCheckout('upi')} disabled={itemCount === 0} className="btn btn-ghost w-full py-3">
+              <button onClick={() => handleCheckout('upi')} disabled={itemCount === 0 || checkingOut} className="btn btn-ghost w-full py-3">
                 UPI / QR
               </button>
-              <button onClick={() => handleCheckout('store_credit')} disabled={itemCount === 0} className="btn btn-ghost w-full py-3">
+              <button onClick={() => handleCheckout('store_credit')} disabled={itemCount === 0 || checkingOut} className="btn btn-ghost w-full py-3">
                 Store Credit
               </button>
+              {checkoutError && (
+                <p
+                  className="text-xs rounded-md px-3 py-2 mt-1"
+                  style={{ color: 'var(--danger)', background: 'var(--danger-bg)', border: '1px solid var(--danger-border)' }}
+                >
+                  {checkoutError}
+                </p>
+              )}
             </div>
           </div>
         )}

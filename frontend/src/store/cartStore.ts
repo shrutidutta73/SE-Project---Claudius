@@ -2,6 +2,11 @@ import { create } from 'zustand'
 import { api } from '../lib/api'
 import type { CartItem, PaymentMethod } from '../types'
 
+export interface CheckoutResult {
+  ok: boolean
+  error?: string
+}
+
 interface CartStore {
   items: CartItem[]
   privacyMode: boolean
@@ -14,7 +19,7 @@ interface CartStore {
   setCustomer: (name: string, phone: string) => void
   togglePrivacyMode: () => void
   clear: () => void
-  checkout: (method: PaymentMethod) => Promise<void>
+  checkout: (method: PaymentMethod) => Promise<CheckoutResult>
 
   total: () => number
 }
@@ -67,7 +72,8 @@ export const useCartStore = create<CartStore>((set, get) => ({
   clear: () => set({ items: [], customerName: '', customerPhone: '' }),
 
   checkout: async (method: PaymentMethod) => {
-    const { items, customerName, customerPhone, total, clear } = get()
+    const { items, customerName, customerPhone, clear } = get()
+    if (items.length === 0) return { ok: false, error: 'Cart is empty.' }
     try {
       await api.post('/sales', {
         items: items.map(i => ({
@@ -82,10 +88,13 @@ export const useCartStore = create<CartStore>((set, get) => ({
         paymentMethod: method,
         discountAmount: 0,
       })
+      clear()
+      return { ok: true }
     } catch (err) {
-      console.error('Checkout failed:', err)
+      // Leave the cart untouched so the user can retry without re-adding items.
+      const message = err instanceof Error ? err.message : 'Checkout failed'
+      return { ok: false, error: message }
     }
-    clear()
   },
 
   total: () => get().items.reduce((sum, i) => sum + i.subtotal, 0),

@@ -21,6 +21,8 @@ export default function POSPage() {
   const [bands, setBands] = useState<PriceBandWithStock[]>([])
   const [categories, setCategories] = useState<Category[]>([])
   const [dataLoading, setDataLoading] = useState(true)
+  const [checkoutError, setCheckoutError] = useState<string | null>(null)
+  const [checkingOut, setCheckingOut] = useState(false)
 
   useEffect(() => {
     Promise.all([
@@ -70,10 +72,27 @@ export default function POSPage() {
     addItem({ priceBandId: band.id, categoryName: band.categoryName, price: band.price })
   }
 
-  async function handleCheckout(method: PaymentMethod) {
-    await checkout(method)
-    setSuccessMethod(method)
-    setTimeout(() => setSuccessMethod(null), 2000)
+  async function handleCheckout(method: PaymentMethod): Promise<boolean> {
+    if (checkingOut) return false
+    setCheckoutError(null)
+    setCheckingOut(true)
+    try {
+      const result = await checkout(method)
+      if (!result.ok) {
+        setCheckoutError(result.error ?? 'Checkout failed.')
+        return false
+      }
+      setSuccessMethod(method)
+      setTimeout(() => setSuccessMethod(null), 2000)
+      // Refresh stock so the PriceGrid reflects the sale immediately.
+      try {
+        const fresh = await api.get<PriceBandWithStock[]>('/price-bands/with-stock')
+        setBands(fresh)
+      } catch {/* stock refresh is best-effort */}
+      return true
+    } finally {
+      setCheckingOut(false)
+    }
   }
 
   // Whether to show customer fields (owner yes, staff no — staff just bills fast)
@@ -203,15 +222,23 @@ export default function POSPage() {
             ) : (
               <>
                 <p className="text-xs font-semibold uppercase tracking-wide mb-1" style={{ color: 'var(--text-4)' }}>Payment</p>
-                <button onClick={() => handleCheckout('cash')} disabled={itemCount === 0} className="btn btn-primary w-full py-3 text-sm font-bold">
-                  Cash{itemCount > 0 ? ` · ₹${totalAmount.toLocaleString('en-IN')}` : ''}
+                <button onClick={() => handleCheckout('cash')} disabled={itemCount === 0 || checkingOut} className="btn btn-primary w-full py-3 text-sm font-bold">
+                  {checkingOut ? 'Processing…' : `Cash${itemCount > 0 ? ` · ₹${totalAmount.toLocaleString('en-IN')}` : ''}`}
                 </button>
-                <button onClick={() => handleCheckout('upi')} disabled={itemCount === 0} className="btn btn-ghost w-full">
+                <button onClick={() => handleCheckout('upi')} disabled={itemCount === 0 || checkingOut} className="btn btn-ghost w-full">
                   UPI / QR
                 </button>
-                <button onClick={() => handleCheckout('store_credit')} disabled={itemCount === 0} className="btn btn-ghost w-full">
+                <button onClick={() => handleCheckout('store_credit')} disabled={itemCount === 0 || checkingOut} className="btn btn-ghost w-full">
                   Store Credit
                 </button>
+                {checkoutError && (
+                  <p
+                    className="text-xs rounded-md px-3 py-2 mt-1"
+                    style={{ color: 'var(--danger)', background: 'var(--danger-bg)', border: '1px solid var(--danger-border)' }}
+                  >
+                    {checkoutError}
+                  </p>
+                )}
               </>
             )}
           </div>
@@ -219,7 +246,12 @@ export default function POSPage() {
       </div>
 
       {/* Mobile cart drawer */}
-      <CartDrawer showCustomer={showCustomer} />
+      <CartDrawer
+        showCustomer={showCustomer}
+        onCheckout={handleCheckout}
+        checkingOut={checkingOut}
+        checkoutError={checkoutError}
+      />
     </div>
   )
 }
