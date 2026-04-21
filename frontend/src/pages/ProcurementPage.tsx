@@ -8,7 +8,7 @@ import VendorCard from '../components/procurement/VendorCard'
 import OrderBuilder from '../components/procurement/OrderBuilder'
 import { api } from '../lib/api'
 import type { Reorder, ReorderStatus, VendorWithDues, SuggestOrderItem } from '../types'
-import { formatDateTime, formatCurrencyFull } from '../lib/utils'
+import { formatDateTime, formatCurrencyFull, buildWhatsAppUrl } from '../lib/utils'
 import { useAuthStore } from '../store/roleStore'
 
 const STATUS_BADGE: Record<ReorderStatus, { color: 'sand' | 'amber' | 'sage' | 'forest'; label: string }> = {
@@ -68,6 +68,13 @@ export default function ProcurementPage() {
   // Expanded reorder rows
   const [expandedReorderId, setExpandedReorderId] = useState<number | null>(null)
 
+  // Transient toast message (e.g. "Vendor has no phone on file")
+  const [toast, setToast] = useState<string | null>(null)
+  function showToast(msg: string) {
+    setToast(msg)
+    window.setTimeout(() => setToast(current => current === msg ? null : current), 3500)
+  }
+
   useEffect(() => {
     Promise.all([
       api.get<VendorWithDues[]>('/vendors'),
@@ -106,9 +113,16 @@ export default function ProcurementPage() {
   }
 
   const handleMessage = (vendor: VendorWithDues) => {
-    const phone = vendor.phone?.replace(/\D/g, '') ?? ''
-    if (!phone) return
-    window.open(`https://wa.me/${phone}`, '_blank')
+    const url = buildWhatsAppUrl(vendor.phone)
+    if (!url) {
+      showToast(
+        vendor.phone
+          ? `"${vendor.phone}" doesn't look like a valid number — edit the vendor to fix.`
+          : `${vendor.name} has no phone number on file — edit the vendor to add one.`,
+      )
+      return
+    }
+    window.open(url, '_blank', 'noopener,noreferrer')
   }
 
   async function handleSend(items: { priceBandId: number; finalQty: number }[]) {
@@ -234,6 +248,15 @@ export default function ProcurementPage() {
 
   return (
     <div className="animate-fade-in">
+      {toast && (
+        <div
+          className="fixed left-1/2 -translate-x-1/2 bottom-6 z-50 animate-slide-up card px-4 py-3 text-sm max-w-md"
+          role="status"
+          style={{ borderColor: 'var(--warning-border)', background: 'var(--warning-bg)', color: 'var(--text-1)' }}
+        >
+          {toast}
+        </div>
+      )}
       <PageHeader
         title="Procurement"
         subtitle="Data-driven ordering"

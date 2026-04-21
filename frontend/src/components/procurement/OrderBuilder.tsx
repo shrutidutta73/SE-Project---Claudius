@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect } from 'react'
 import type { VendorWithDues, SuggestOrderItem, Reorder, ReorderStatus } from '../../types'
 import TabBar from '../ui/TabBar'
 import Button from '../ui/Button'
-import { formatCurrencyFull } from '../../lib/utils'
+import { formatCurrencyFull, buildWhatsAppUrl } from '../../lib/utils'
 
 interface Props {
   vendor: VendorWithDues
@@ -65,11 +65,11 @@ export default function OrderBuilder({ vendor, suggestions, reorder, onSend, onC
 
   const previewMessage = hasAnyQty ? buildMessage(vendor.name, messageItems) : ''
 
+  const waUrl = buildWhatsAppUrl(vendor.phone, previewMessage)
+
   const handleSendWhatsApp = () => {
     if (!hasAnyQty) return
-    const phone = vendor.phone?.replace(/\D/g, '') ?? ''
-    const encoded = encodeURIComponent(previewMessage)
-    if (phone) window.open(`https://wa.me/${phone}?text=${encoded}`, '_blank')
+    if (waUrl) window.open(waUrl, '_blank', 'noopener,noreferrer')
     onSend(suggestions.map((s) => ({ priceBandId: s.priceBandId, finalQty: qtys[s.priceBandId] ?? 0 })))
   }
 
@@ -176,13 +176,20 @@ export default function OrderBuilder({ vendor, suggestions, reorder, onSend, onC
 
       {/* Action buttons */}
       <div className="flex flex-col gap-2 pt-1">
+        {hasAnyQty && !waUrl && (
+          <p className="text-xs" style={{ color: 'var(--warning)' }}>
+            {vendor.phone
+              ? `"${vendor.phone}" isn't a valid WhatsApp number — the order will still be saved, but no message will open.`
+              : 'No phone on file — the order will be saved, but no WhatsApp message will open. Edit the vendor to add a phone.'}
+          </p>
+        )}
         <Button
           variant="primary"
           fullWidth
           disabled={!hasAnyQty}
           onClick={handleSendWhatsApp}
         >
-          {vendor.phone ? 'Send to WhatsApp' : 'Save order (no phone on file)'}
+          {waUrl ? 'Send to WhatsApp' : 'Save order'}
         </Button>
         <Button variant="ghost" fullWidth onClick={onClose}>
           Cancel
