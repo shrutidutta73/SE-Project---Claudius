@@ -88,10 +88,14 @@ router.patch(
 )
 
 // PATCH /gps-settings
+// Managers can toggle GPS enforcement policy (and keep the existing coords)
+// alongside owners, who remain the only role able to edit store settings at
+// large. This mirrors the Staff page UX where managers control day-to-day
+// attendance rules for their team.
 router.patch(
   '/gps-settings',
   authenticate,
-  authorize('owner'),
+  authorize('owner', 'manager'),
   asyncHandler(async (req, res) => {
     const body = UpdateGpsSettingsSchema.parse(req.body)
     const store = await updateGpsSettings(req.user.storeId, body)
