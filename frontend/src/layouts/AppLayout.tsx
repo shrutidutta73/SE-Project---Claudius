@@ -3,7 +3,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { getInitials } from '../lib/utils'
 import { useAuthStore, ROLE_ROUTES, ROLE_DEFAULT, type Role } from '../store/roleStore'
 import { api } from '../lib/api'
-import type { Store } from '../types'
+import type { Store, StaffLeaderboardEntry } from '../types'
 
 function IcLogout()   { return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg> }
 function IcSettings() { return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg> }
@@ -35,6 +35,7 @@ export default function AppLayout({ children }: Props) {
   const { pathname } = useLocation()
   const navigate     = useNavigate()
   const { currentUser, logout } = useAuthStore()
+  const setClockedIn = useAuthStore(s => s.setClockedIn)
   const role = (currentUser?.role ?? 'staff') as Role
   const [currentStore, setCurrentStore] = useState<Store | null>(null)
 
@@ -43,6 +44,24 @@ export default function AppLayout({ children }: Props) {
       api.get<Store>('/store').then(setCurrentStore).catch(() => {})
     }
   }, [currentUser?.storeId])
+
+  // Restore clock-in state on any protected page (POS, Inventory, etc.), not
+  // just /staff. Without this, refreshing /pos with an open shift shows "Not
+  // clocked in" until the user navigates to Staff and back.
+  useEffect(() => {
+    if (!currentUser || currentUser.role !== 'staff') return
+    api.get<StaffLeaderboardEntry[]>('/staff/leaderboard')
+      .then(entries => {
+        const me = entries.find(e => e.userId === currentUser.id)
+        if (!me) return
+        if (me.clockedIn && me.checkInAt) {
+          setClockedIn(true, new Date(me.checkInAt))
+        } else {
+          setClockedIn(false)
+        }
+      })
+      .catch(() => {/* best-effort — StaffDashboard will retry on its own */})
+  }, [currentUser?.id, currentUser?.role, setClockedIn])
 
   const navItems = (ROLE_NAV_ORDER[role] ?? [])
     .map(p => ALL_NAV.find(n => n.path === p))
