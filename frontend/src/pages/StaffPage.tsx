@@ -259,6 +259,8 @@ function StaffDashboard({ store }: StaffDashboardProps) {
     gpsLatitude: 0,
     gpsLongitude: 0,
     gpsRadiusM: 500,
+    gpsRequireClockIn: false,
+    gpsRequireClockOut: false,
     billingMode: 'structured',
     retentionDays: null,
     createdAt: '',
@@ -374,6 +376,22 @@ export default function StaffPage() {
 
   const { globalClockIn, globalClockOut, setGlobal } = useGpsSettingsStore()
   const [tab, setTab] = useState<'staff' | 'roster'>('staff')
+
+  // Fallback store used only if /store hasn't loaded yet
+  const effectiveStore: Store = store ?? {
+    id: 0,
+    name: '',
+    address: '',
+    gpsLatitude: 0,
+    gpsLongitude: 0,
+    gpsRadiusM: 500,
+    gpsRequireClockIn: false,
+    gpsRequireClockOut: false,
+    billingMode: 'structured',
+    retentionDays: null,
+    createdAt: '',
+    updatedAt: '',
+  }
   const [showAdd,      setShowAdd]      = useState(false)
   const [editTarget,   setEditTarget]   = useState<User | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<User | null>(null)
