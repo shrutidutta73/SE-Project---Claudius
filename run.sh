@@ -14,9 +14,10 @@ gnome-terminal --title="Database" -- bash -c "
 gnome-terminal --title="Backend" -- bash -c "
   cd '$ROOT/backend'
   echo '==> Waiting for PostgreSQL on port 5432...'
-  until pg_isready -h localhost -p 5432 -U smallbiz -q 2>/dev/null; do
+  until (exec 3<>/dev/tcp/localhost/5432) 2>/dev/null; do
     sleep 1
   done
+  exec 3>&- 3<&-
   echo '==> Database ready. Starting backend...'
   npm run dev
   exec bash
