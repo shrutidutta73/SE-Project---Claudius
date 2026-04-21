@@ -21,11 +21,13 @@ interface UserFormProps {
   withEmail?: boolean
   withPassword?: boolean
   withPin?: boolean
+  apiError?: string | null
+  submitting?: boolean
   onSubmit: (name: string, phone: string, email?: string, password?: string, pin?: string) => void
   onCancel: () => void
   submitLabel: string
 }
-function UserForm({ initial, withEmail, withPassword, withPin, onSubmit, onCancel, submitLabel }: UserFormProps) {
+function UserForm({ initial, withEmail, withPassword, withPin, apiError, submitting, onSubmit, onCancel, submitLabel }: UserFormProps) {
   const [name,     setName]     = useState(initial?.name  ?? '')
   const [phone,    setPhone]    = useState(initial?.phone ?? '')
   const [email,    setEmail]    = useState(initial?.email ?? '')
@@ -119,9 +121,14 @@ function UserForm({ initial, withEmail, withPassword, withPin, onSubmit, onCance
         </div>
       )}
       {err && <p className="text-xs" style={{ color: 'var(--danger)' }}>{err}</p>}
+      {apiError && !err && (
+        <p className="text-xs rounded-md px-3 py-2" style={{ color: 'var(--danger)', background: 'var(--danger-bg)', border: '1px solid var(--danger-border)' }}>
+          {apiError}
+        </p>
+      )}
       <div className="flex gap-2 pt-1">
-        <button type="button" className="btn btn-ghost flex-1" onClick={onCancel}>Cancel</button>
-        <button type="submit"  className="btn btn-primary flex-1">{submitLabel}</button>
+        <button type="button" className="btn btn-ghost flex-1" onClick={onCancel} disabled={submitting}>Cancel</button>
+        <button type="submit"  className="btn btn-primary flex-1" disabled={submitting}>{submitting ? 'Saving…' : submitLabel}</button>
       </div>
     </form>
   )
@@ -396,6 +403,39 @@ export default function StaffPage() {
   const [editTarget,   setEditTarget]   = useState<User | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<User | null>(null)
 
+  // Inline API error + submitting state for the Add / Edit modals
+  const [formError,     setFormError]     = useState<string | null>(null)
+  const [formSubmitting, setFormSubmitting] = useState(false)
+
+  function openAddModal() {
+    setFormError(null)
+    setShowAdd(true)
+  }
+  function closeAddModal() {
+    setShowAdd(false)
+    setFormError(null)
+    setFormSubmitting(false)
+  }
+  function openEditModal(u: User) {
+    setFormError(null)
+    setEditTarget(u)
+  }
+  function closeEditModal() {
+    setEditTarget(null)
+    setFormError(null)
+    setFormSubmitting(false)
+  }
+
+  function friendlyError(err: unknown): string {
+    const raw = err instanceof Error ? err.message : String(err)
+    if (!raw) return 'Could not save. Please try again.'
+    if (/duplicate/i.test(raw))   return 'That phone number is already in use.'
+    if (/validation/i.test(raw))  return 'Invalid input — check name, phone, and PIN/password.'
+    if (/token|unauth/i.test(raw)) return 'Your session expired. Log in again.'
+    if (/forbidden|permission/i.test(raw)) return "You don't have permission to do that."
+    return raw
+  }
+
   // Fetch users and store on mount; seed GPS toggles from store
   useEffect(() => {
     api.get<User[]>('/users').then(setUsers).catch(() => {})
@@ -447,38 +487,62 @@ export default function StaffPage() {
   }
 
   async function handleAddManager(name: string, phone: string, email?: string, password?: string) {
+    setFormError(null)
+    setFormSubmitting(true)
     try {
       const newUser = await api.post<User>('/users', { name, phone, email, role: 'manager', password })
       setUsers(prev => [...prev, newUser])
-      setShowAdd(false)
-    } catch {/* ignore */}
+      closeAddModal()
+    } catch (err) {
+      setFormError(friendlyError(err))
+    } finally {
+      setFormSubmitting(false)
+    }
   }
 
   async function handleAddStaff(name: string, phone: string, _email?: string, _password?: string, pin?: string) {
+    setFormError(null)
+    setFormSubmitting(true)
     try {
       const newUser = await api.post<User>('/users', { name, phone, role: 'staff', pin })
       setUsers(prev => [...prev, newUser])
-      setShowAdd(false)
-    } catch {/* ignore */}
+      closeAddModal()
+    } catch (err) {
+      setFormError(friendlyError(err))
+    } finally {
+      setFormSubmitting(false)
+    }
   }
 
   async function handleUpdateUser(id: number, patch: { name: string; phone: string; email?: string }) {
+    setFormError(null)
+    setFormSubmitting(true)
     try {
       const updated = await api.patch<User>(`/users/${id}`, patch)
       setUsers(prev => prev.map(u => u.id === id ? updated : u))
-      setEditTarget(null)
-    } catch {/* ignore */}
+      closeEditModal()
+    } catch (err) {
+      setFormError(friendlyError(err))
+    } finally {
+      setFormSubmitting(false)
+    }
   }
 
   async function handleUpdateStaff(id: number, name: string, phone: string, pin?: string) {
+    setFormError(null)
+    setFormSubmitting(true)
     try {
       const updated = await api.patch<User>(`/users/${id}`, { name, phone })
       setUsers(prev => prev.map(u => u.id === id ? updated : u))
       if (pin) {
         await api.patch(`/users/${id}/pin`, { pin })
       }
-      setEditTarget(null)
-    } catch {/* ignore */}
+      closeEditModal()
+    } catch (err) {
+      setFormError(friendlyError(err))
+    } finally {
+      setFormSubmitting(false)
+    }
   }
 
   async function handleDeleteUser(id: number) {
@@ -512,7 +576,7 @@ export default function StaffPage() {
             <h1 className="text-xl font-bold" style={{ color: 'var(--text-1)' }}>Managers</h1>
             <p className="text-sm mt-0.5" style={{ color: 'var(--text-3)' }}>{managers.length} manager{managers.length !== 1 ? 's' : ''}</p>
           </div>
-          <button onClick={() => setShowAdd(true)} className="btn btn-primary flex items-center gap-1.5 text-sm">
+          <button onClick={openAddModal} className="btn btn-primary flex items-center gap-1.5 text-sm">
             <IcPlus /> Add Manager
           </button>
         </div>
@@ -528,7 +592,7 @@ export default function StaffPage() {
                 key={u.id}
                 user={u}
                 isCurrentUser={u.id === currentUser?.id}
-                onEdit={setEditTarget}
+                onEdit={openEditModal}
                 onDelete={setDeleteTarget}
                 onAvatarSave={dataUrl => handleAvatarSave(u.id, dataUrl)}
               />
@@ -537,24 +601,28 @@ export default function StaffPage() {
         </div>
 
         {/* Add manager modal */}
-        <Modal open={showAdd} onClose={() => setShowAdd(false)} title="Add Manager">
+        <Modal open={showAdd} onClose={closeAddModal} title="Add Manager">
           <UserForm
             withEmail
             withPassword
+            apiError={formError}
+            submitting={formSubmitting}
             onSubmit={handleAddManager}
-            onCancel={() => setShowAdd(false)}
+            onCancel={closeAddModal}
             submitLabel="Add Manager"
           />
         </Modal>
 
         {/* Edit modal */}
-        <Modal open={!!editTarget} onClose={() => setEditTarget(null)} title="Edit Manager">
+        <Modal open={!!editTarget} onClose={closeEditModal} title="Edit Manager">
           {editTarget && (
             <UserForm
               withEmail
               initial={{ name: editTarget.name, phone: editTarget.phone, email: editTarget.email ?? '' }}
+              apiError={formError}
+              submitting={formSubmitting}
               onSubmit={(name, phone, email) => handleUpdateUser(editTarget.id, { name, phone, email })}
-              onCancel={() => setEditTarget(null)}
+              onCancel={closeEditModal}
               submitLabel="Save Changes"
             />
           )}
@@ -607,7 +675,7 @@ export default function StaffPage() {
           <p className="text-sm mt-0.5" style={{ color: 'var(--text-3)' }}>{onShift} on shift · {staff.length} total</p>
         </div>
         {tab === 'staff' && (
-          <button onClick={() => setShowAdd(true)} className="btn btn-primary flex items-center gap-1.5 text-sm">
+          <button onClick={openAddModal} className="btn btn-primary flex items-center gap-1.5 text-sm">
             <IcPlus /> Add Staff
           </button>
         )}
@@ -710,7 +778,7 @@ export default function StaffPage() {
                         <p className="text-xs mt-0.5" style={{ color: 'var(--text-3)' }}>{u.phone}</p>
                       </div>
                       <div className="flex items-center gap-1 flex-shrink-0">
-                        <button onClick={() => setEditTarget(u)} className="w-8 h-8 flex items-center justify-center rounded-md" style={{ color: 'var(--text-3)', border: '1px solid var(--border)' }}><IcEdit /></button>
+                        <button onClick={() => openEditModal(u)} className="w-8 h-8 flex items-center justify-center rounded-md" style={{ color: 'var(--text-3)', border: '1px solid var(--border)' }}><IcEdit /></button>
                         <button onClick={() => setDeleteTarget(u)} className="w-8 h-8 flex items-center justify-center rounded-md" style={{ color: 'var(--danger)', border: '1px solid var(--border)' }}><IcDelete /></button>
                       </div>
                     </div>
@@ -819,23 +887,27 @@ export default function StaffPage() {
       )}
 
       {/* Add staff modal */}
-      <Modal open={showAdd} onClose={() => setShowAdd(false)} title="Add Staff Member">
+      <Modal open={showAdd} onClose={closeAddModal} title="Add Staff Member">
         <UserForm
           withPin
+          apiError={formError}
+          submitting={formSubmitting}
           onSubmit={handleAddStaff}
-          onCancel={() => setShowAdd(false)}
+          onCancel={closeAddModal}
           submitLabel="Add Staff"
         />
       </Modal>
 
       {/* Edit modal */}
-      <Modal open={!!editTarget} onClose={() => setEditTarget(null)} title="Edit Staff Member">
+      <Modal open={!!editTarget} onClose={closeEditModal} title="Edit Staff Member">
         {editTarget && (
           <UserForm
             withPin
             initial={{ name: editTarget.name, phone: editTarget.phone }}
+            apiError={formError}
+            submitting={formSubmitting}
             onSubmit={(name, phone, _email, _password, pin) => handleUpdateStaff(editTarget.id, name, phone, pin)}
-            onCancel={() => setEditTarget(null)}
+            onCancel={closeEditModal}
             submitLabel="Save Changes"
           />
         )}
